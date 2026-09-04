@@ -1,0 +1,109 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>ExpenseMate — Personal Expense Manager</title>
+  <link rel="stylesheet" href="/static/style.css" />
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+</head>
+<body>
+  <!-- ==================== LOGIN / SESSION ==================== -->
+  <section id="auth" class="auth">
+    <div class="card auth-card">
+      <h1>💸 ExpenseMate</h1>
+      <p class="sub">Personal Expense Manager</p>
+      <label>Username <input id="user" placeholder="e.g. ali" /></label>
+      <label>Password <input id="pass" type="password" placeholder="••••••" /></label>
+      <div class="row">
+        <button class="btn primary" onclick="login()">Log in</button>
+        <button class="btn" onclick="register()">Register</button>
+      </div>
+      <p id="authMsg" class="msg"></p>
+    </div>
+  </section>
+
+  <!-- ==================== DASHBOARD ==================== -->
+  <div id="app" class="hidden">
+    <header class="topbar">
+      <div class="brand">💸 ExpenseMate</div>
+      <div class="who">
+        <span id="whoLabel"></span>
+        <select id="monthSel"></select>
+        <button class="btn small" onclick="logout()">Logout</button>
+      </div>
+    </header>
+
+    <main class="grid">
+      <!-- summary cards -->
+      <section class="cards">
+        <div class="c"><div class="c-v" id="cIncome">0</div><div class="c-k">Income</div></div>
+        <div class="c"><div class="c-v red" id="cExpense">0</div><div class="c-k">Expense</div></div>
+        <div class="c"><div class="c-v" id="cBalance">0</div><div class="c-k">Balance</div></div>
+        <div class="c"><div class="c-v amber" id="cAlerts">0</div><div class="c-k">Alerts</div></div>
+      </section>
+
+      <!-- alerts -->
+      <section id="alertBox" class="card alerts"></section>
+
+      <!-- charts -->
+      <section class="card">
+        <h3>Category-wise Expense</h3>
+        <canvas id="pieChart" width="400" height="280"></canvas>
+      </section>
+      <section class="card">
+        <h3>Monthly Trend</h3>
+        <canvas id="lineChart" width="400" height="280"></canvas>
+      </section>
+
+      <!-- add transaction -->
+      <section class="card">
+        <h3>Add Transaction</h3>
+        <div class="form">
+          <label>Type
+            <select id="txType">
+              <option value="expense">Expense</option>
+              <option value="income">Income</option>
+            </select>
+          </label>
+          <label>Description <input id="txDesc" placeholder="e.g. Groceries" /></label>
+          <label>Amount <input id="txAmt" type="number" min="0" step="0.01" /></label>
+          <label>Category <input id="txCat" placeholder="auto" /></label>
+          <label>Date <input id="txDate" type="date" /></label>
+          <label>Currency <select id="txCur"></select></label>
+          <button class="btn primary" onclick="addTx()">Add</button>
+          <p id="txMsg" class="msg"></p>
+        </div>
+      </section>
+
+      <!-- budget -->
+      <section class="card">
+        <h3>Set Monthly Budget</h3>
+        <div class="form">
+          <label>Category <select id="bgCat"></select></label>
+          <label>Amount <input id="bgAmt" type="number" min="0" step="0.01" /></label>
+          <button class="btn primary" onclick="setBudget()">Set</button>
+          <p id="bgMsg" class="msg"></p>
+        </div>
+        <div id="budgetList" class="budget-list"></div>
+      </section>
+
+      <!-- csv -->
+      <section class="card">
+        <h3>CSV Import / Export</h3>
+        <table class="tx-table"><thead>
+          <tr><th>Date</th><th>Description</th><th>Amount</th><th>Type</th><th>Category</th><th></th></tr>
+        </thead><tbody id="txTable"></tbody></table>
+        <div class="row" style="margin-top:12px">
+          <button class="btn" onclick="exportCsv()">Export CSV</button>
+          <label class="btn file">Import CSV<input id="csvFile" type="file" accept=".csv"
+            onchange="importCsv(event)" hidden /></label>
+        </div>
+        <p id="csvMsg" class="msg"></p>
+      </section>
+    </main>
+  </div>
+
+  <script src="/static/app.js"></script>
+</body>
+</html>

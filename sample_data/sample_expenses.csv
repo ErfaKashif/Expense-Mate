@@ -1,0 +1,11 @@
+date,description,amount,type,category,currency
+2026-09-01,Weekly groceries,120.50,expense,Groceries,USD
+2026-09-02,Salary from employer,2500.00,income,Salary,USD
+2026-09-03,Monthly rent,900.00,expense,Rent,USD
+2026-09-04,Uber rides,45.00,expense,Transport,USD
+2026-09-05,Gym membership,60.00,expense,Fitness,USD
+2026-09-06,Netflix subscription,15.99,expense,Entertainment,USD
+2026-09-07,Electricity bill,85.00,expense,Utilities,USD
+2026-09-08,Restaurant dinner,70.00,expense,Dining,USD
+2026-09-09,Freelance project,400.00,income,Freelance,USD
+2026-09-10,New headphones,120.00,expense,Shopping,USD
