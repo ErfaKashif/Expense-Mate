@@ -88,22 +88,12 @@
         <div id="budgetList" class="budget-list"></div>
       </section>
 
-        <!-- View & Manage Transactions Table -->
-      <section class="card full-width">
-        <h3>Recent Income & Expense Records</h3>
-        <div class="table-wrapper">
-          <table class="tx-table"><thead>
-            <tr><th>Date</th><th>Description</th><th>Amount</th><th>Type</th><th>Category</th><th></th></tr>
-            </thead><tbody id="txTable"></tbody></table>
-            <tbody id="transactions_table">
-            </tbody>
-          </table>
-        </div>
-      </section>
-
       <!-- csv -->
       <section class="card">
         <h3>CSV Import / Export</h3>
+        <table class="tx-table"><thead>
+          <tr><th>Date</th><th>Description</th><th>Amount</th><th>Type</th><th>Category</th><th></th></tr>
+        </thead><tbody id="txTable"></tbody></table>
         <div class="row" style="margin-top:12px">
           <button class="btn" onclick="exportCsv()">Export CSV</button>
           <label class="btn file">Import CSV<input id="csvFile" type="file" accept=".csv"
