@@ -19,10 +19,12 @@ built from scratch to demonstrate the full Software Construction lifecycle:
 ### 1.2 Scope
 * **In scope:** user accounts, income/expense records, monthly category budgets,
   automatic budget alerts, category-wise analytics & visual charts, CSV
-  import/export, single-user-per-account data.
-* **Out of scope (future):** multi-currency *conversion-weighted* reporting,
-  cloud/backup sync, mobile apps, multiple currencies per wallet UI.
-  A simple multi-currency *label* (currency per transaction) is a stretch goal.
+  import/export, single-user-per-account data, and **full multi-currency
+  support** (per-transaction currency, a per-user base/reporting currency,
+  conversion-weighted analytics, an exchange-rate table and a converter).
+* **Out of scope (future):** live FX feed from a third-party API (rates are a
+  maintained offline table), cloud/backup sync, mobile apps, multi-wallet
+  accounts, recurring/standing-order transactions.
 
 ### 1.3 Definitions & Terms
 | Term | Meaning |
@@ -39,8 +41,10 @@ built from scratch to demonstrate the full Software Construction lifecycle:
 * **Operating environment:** single workstation; Python 3.11+; SQLite (no external DB server).
 * **Architecture style:** 4-tier **Client-Server** (Presentation / Server API / Logic / Persistence).
 * **Users:** one authenticated owner per account (single-user sessions).
-* **Assumptions:** amounts stored in native currency; analytics sum native amounts
-  except where noted; user has a browser.
+* **Assumptions:** each amount is stored in its **native** currency together with
+  that currency code; all analytics convert amounts into the user's **base
+  currency** via USD as the pivot; exchange rates are a maintained offline table
+  (no network access is required); the user has a modern browser.
 
 ---
 
@@ -58,7 +62,11 @@ built from scratch to demonstrate the full Software Construction lifecycle:
 | FR-08 | The system shall render **visual charts** for category-wise expense (pie/doughnut) and **monthly income/expense trend** (line). | High |
 | FR-09 | The system shall **export** transactions to **CSV** and **import** transactions **from CSV**, skipping malformed rows. | **High** |
 | FR-10 | The system shall **persist** all data in SQLite and restore it across restarts. | High |
-| FR-11 | The system shall support **multi-currency** labels on transactions (USD, PKR, EUR, GBP, INR, AED, SAR) via a rate table. | Med (stretch) |
+| FR-11 | The system shall support **multi-currency** transactions: each record stores its own currency code from a supported set of **20 currencies** (USD, PKR, EUR, GBP, INR, AED, SAR, QAR, KWD, OMR, CAD, AUD, SGD, MYR, BDT, TRY, JPY, CNY, ZAR, CHF) with an offline FX rate table. | High |
+| FR-12 | The system shall let each user set a **base (reporting) currency** and shall **convert all analytics** — totals, per-category sums, monthly trend and budget comparisons — into it, so mixed-currency data yields correct figures. | **High** |
+| FR-13 | The system shall expose an **exchange-rate table** (1 unit of each currency in base, and 1 base in each currency) and a **quick converter** endpoint/UI. | Med |
+| FR-14 | The system shall preserve **native** amounts: the transaction list shows both the native amount and the converted base amount, and CSV export includes both. | Med |
+| FR-15 | The system shall **deploy as a serverless function** (Vercel) as well as run locally, honouring an injected `PORT` and a writable DB path. | Med |
 
 ---
 
@@ -94,6 +102,8 @@ The use case diagram is in **`diagrams/use_case_diagram.png`** (Member B). Main 
 ## 6. Appendix — Traceability
 
 FR-01→auth; FR-02→transactions; FR-03,06→logic; FR-04→list/delete; FR-05,06→budget;
-FR-07,08→summary/charts; FR-09→csv; FR-10→db; FR-11→currency; NFR→layering & tests.
+FR-07,08→summary/charts; FR-09→csv; FR-10→db; FR-11..14→multi-currency
+(`logic.convert`, `base_currency`, `rates_table`, `transactions_view`);
+FR-15→`api/index.py` + `vercel.json`; NFR→layering & tests.
 
 **Deliverable status:** ✅ 2-page SRS complete (functional + non-functional + use cases).

@@ -16,7 +16,17 @@ team (Members A & B; Team Lead submits).
 * Monthly per-category **budgets** with automatic **budget alerts** (≥80% warning, ≥95% critical).
 * **Category-wise analytics** + doughnut chart, **monthly trend** line chart.
 * **CSV import/export** (malformed rows skipped safely).
-* **Multi-currency** labels (USD, PKR, EUR, GBP, INR, AED, SAR) — an adaptive feature.
+* **Full multi-currency support** — **20 currencies**, a currency per transaction, a per-user
+  **base (reporting) currency** switchable at runtime, **conversion-weighted analytics**
+  (totals, per-category sums, monthly trend *and* budget comparisons all converted through
+  USD as pivot), **native amounts preserved** (`by_currency` breakdown, `amount_base` on every
+  row, converted column in CSV export), an **exchange-rate table** and a **quick converter**.
+* **Navigation bar** mapping 1:1 to features (Dashboard, Add Transaction, View Transactions,
+  Analytics & Reports, Budgets & Alerts, Currency, CSV Tools) with smooth scroll + slide-down
+  reveal; **light theme** (soft blues, white, neutral grays, sage greens); Chart.js
+  **vendored locally** so charts always render and refresh without internet.
+* **Deployable** as a Vercel serverless function (`api/index.py` + `vercel.json`) as well as
+  locally (`run.py`, PORT-aware, debugger disabled on deployed hosts).
 
 ---
 
@@ -59,25 +69,43 @@ ExpenseMate/
 | Level | Cases | Result |
 |-------|-------|--------|
 | Unit (db) | 11 | ✅ pass |
-| Unit (logic) | 21 | ✅ pass |
-| Integration & system (API) | 8 | ✅ pass |
-| **Total** | **40** | **100% pass** · **94% code coverage** |
+| Unit (logic) | 30 | ✅ pass |
+| Integration & system (API) | 21 | ✅ pass |
+| **Total** | **62** | **100% pass** · **94% code coverage** (442 statements) |
 
-**Complexity (cyclomatic, via `radon`):** LOC 613, SLOC 442, 37 functions, avg CC **2.43**,
-max CC **9** (all within acceptable limits). **Fault-find/fix:** 3 defects found & fixed,
-**fault-fix rate 100%**, 0 open defects.
+**Coverage by module:** `logic.py` **97%** · `db.py` **97%** · `server.py` **89%**.
+
+**Complexity (cyclomatic, via `radon`):** Python LOC **910**, SLOC **633**, comments **91**;
+backend **46** blocks, total CC **125**, **avg CC 2.72**, **max CC 10**
+(`category_summary` and `budget_status`, both grade **B** = well-structured, low risk).
+The front end adds 196 (HTML) + 361 (JS) + 179 (CSS) lines.
+**Fault-find/fix:** 4 defects found & fixed, **fault-fix rate 100%**, 0 open defects.
 
 ---
 
 ## 4. Maintenance & Evolution
 
-Following Lehman's Laws, we kept the system alive:
-* **Adaptive** — added multi-currency (`_convert()` rate table + UI selector).
-* **Corrective** — fixed 3 defects (duplicate-username 409, CSV import resilience, `None` category export).
-* **Perfective** — refactored `logic.py`, centralised validation via `ValidationError`, added docstrings.
+Following Lehman's Laws, we kept the system alive across **nine** logged changes:
+* **Adaptive** — multi-currency in two rounds. CHG-01 added currency *labels*; a design review
+  then showed analytics were summing **native** amounts (`100 USD + 5000 PKR → 5100`, which is
+  meaningless), so **CHG-06** upgraded it to *real conversion*: 20 currencies, per-user base
+  currency, conversion-weighted totals/trends/budgets, native breakdown preserved, converter +
+  rate table. **No schema migration was required** — Round 1's schema already carried
+  `base_currency`/`currency`, the payoff of designing for change.
+* **Corrective** — 4 defects fixed: duplicate-username 409, CSV import resilience, `None`
+  category export, and **BUG-04 "charts don't update"**: Chart.js was loaded from a CDN, so when
+  it failed to load `drawPie()` threw and aborted the whole refresh chain (cards, table and
+  charts all froze). The library is now **vendored locally** and charts are destroyed and
+  redrawn on every data change. CHG-09 also removed a genuine security exposure —
+  `debug=True` on a public host permits remote code execution.
+* **Perfective** — refactored `logic.py`, centralised validation via `ValidationError`, added
+  docstrings, replaced hard-coded `$` formatting with base-symbol-driven `fmt()`, and added the
+  navigation bar + CSS-custom-property light theme.
 
-All changes were localised because of the layer separation, and the full 40-test suite
-re-ran green after maintenance — confirming non-disruptive evolution.
+All changes were localised because of the layer separation, and the full **62-test** suite
+re-ran green after maintenance (coverage *rose* to 97% in both business layers) — confirming
+non-disruptive evolution. One legacy test that asserted the old naive currency summing was
+deliberately rewritten to assert the corrected, converted behaviour.
 
 ---
 
@@ -98,10 +126,28 @@ export/import CSV. Sample data to import: `sample_data/sample_expenses.csv`.
 
 **Run the tests:**
 ```bash
-python -m pytest -v          # 40 tests
+python -m pytest -v          # 62 tests
 python -m pytest --cov=app.backend    # coverage report (94%)
 python -m radon cc app/backend -s    # complexity metrics
 ```
+
+### 5.1 Try the multi-currency feature
+1. **Add Transaction** → enter an amount with currency **PKR** (e.g. 5000) and another in **USD**.
+2. Open **Currency** in the nav → the rate table shows 20 currencies; the converter turns
+   `100 USD` into `Rs 27,777.78`.
+3. Switch **Base currency** to **PKR** → every card, chart, budget bar and alert instantly
+   re-converts; switch back to **USD** and it reverts. Native amounts are still visible per
+   currency in "This Month — Native Totals per Currency".
+4. **View Transactions** shows both the native amount (`Rs5,000.00`) and the converted base
+   amount (`$18.00`), with a `⇄` marker on foreign rows.
+
+### 5.2 Deploy it (Vercel / Render / PythonAnywhere)
+```bash
+npm install -g vercel && vercel login
+cd ExpenseMate && vercel --prod
+```
+Full step-by-step instructions, environment variables, troubleshooting and the SQLite
+persistence caveat are in **`docs/Deployment_Vercel.md`**.
 
 **Regenerate diagrams:** `python docs/make_diagrams.py` (matplotlib only).
 
@@ -117,14 +163,19 @@ python -m radon cc app/backend -s    # complexity metrics
 | **Budget alerts** (challenging part) | ✅ |
 | **CSV import/export** (challenging part) | ✅ |
 | **Category-wise analytics + charts** (challenging part) | ✅ |
-| Multi-currency & future cloud backup | ✅ (multi-currency) / O (backup: future) |
+| **Multi-currency** (20 currencies, base switching, converted analytics) | ✅ Delivered in full |
+| Deployment (Vercel serverless + local/PaaS) | ✅ `api/index.py`, `vercel.json`, guide |
+| Cloud backup / persistent hosted database | O (future — see `docs/Deployment_Vercel.md`) |
 | Full lifecycle deliverables | ✅ (6 phases bundled) |
 
 ### 6.1 Limitations & Future Work
 * CSV import is **best-effort** — duplicate rows aren't de-duplicated.
-* Currency reporting sums **native** amounts (conversion offered but not forced); a
-  single-currency dashboard is a future enhancement.
-* Cloud backup, multiple wallets, and live FX rates remain out of scope.
+* Exchange rates are a **maintained offline table**, not a live FX feed — connecting an API
+  (e.g. exchangerate.host) with caching is future work.
+* SQLite on a **serverless** host (Vercel) is ephemeral (`/tmp` is wiped); persistent storage
+  needs an external DB (Turso/libSQL or Postgres) or a host with a real disk (Render,
+  Railway, PythonAnywhere). Options are documented in `docs/Deployment_Vercel.md`.
+* Cloud backup, multiple wallets/accounts per user, and recurring transactions remain out of scope.
 
 ---
 
@@ -136,9 +187,13 @@ using disciplined software construction:
   were cheap and safe.
 * **Validation at the logic layer** kept the server thin and the data trustworthy.
 * **Automated tests + coverage + complexity metrics** gave objective evidence of
-  quality (40/40 tests, 94% coverage, avg CC 2.4).
+  quality (**62/62 tests**, 94% coverage, avg CC 2.72, 97% on the business layers).
 * **Lehman's Laws guided maintenance** — we deliberately refactored to keep complexity
-  from drifting upward while adding a new feature.
+  from drifting upward while adding a new feature, and we let a review finding
+  (naive currency summing) drive a second adaptive round rather than shipping a
+  subtly wrong number.
+* **Tests encode requirements** — when the currency behaviour was corrected, the test that
+  asserted the old behaviour was rewritten; the suite stayed the project's source of truth.
 
 The system is **complete, runnable, tested, and demo-ready.**
 

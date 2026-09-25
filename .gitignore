@@ -1,0 +1,10 @@
+__pycache__/
+*.pyc
+*.pyo
+.pytest_cache/
+.coverage
+coverage.json
+app/data/
+.venv/
+venv/
+.vercel/

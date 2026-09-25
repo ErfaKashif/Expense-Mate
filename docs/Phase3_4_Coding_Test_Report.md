@@ -27,7 +27,8 @@ wired (Phase 4) through the HTTP API.
 * **`test_logic.py`** (Member A, business tests) — *Business Logic* via a `Logic` object
   over a temp DB. Covers input validation, category analytics, balance, trend ordering,
   budget alert thresholds (ok/warning/critical), CSV export/import (incl. malformed-row
-  skipping and wrong headers), currency conversion, multi-currency storage.
+  skipping and wrong headers), currency conversion, conversion-weighted analytics,
+  base-currency switching, cross-currency budgets.
 * **`test_api.py`** (Member B) — the *server + API* using Flask's `test_client`.
   Covers HTTP status codes, auth, and the full user journey.
 
@@ -35,29 +36,40 @@ wired (Phase 4) through the HTTP API.
 
 ## 3. Unit Test Results
 
-**Result: 40 passed, 0 failed (100%).** Full verbose run:
+**Result: 62 passed, 0 failed (100%).** Full run:
 
 ```
-===================== 40 passed in 0.31s =====================
+===================== 62 passed in 0.78s =====================
 ```
 
 | Test file | Tests | Pass | Fail | Purpose |
 |-----------|-------|------|------|---------|
 | `test_db.py` | 11 | 11 | 0 | Persistence layer |
-| `test_logic.py` | 21 | 21 | 0 | Business rules, budgets/alerts, analytics, CSV, currency |
-| `test_api.py` | 8 | 8 | 0 | HTTP/API integration & system |
+| `test_logic.py` | 30 | 30 | 0 | Business rules, budgets/alerts, analytics, CSV, **multi-currency conversion** |
+| `test_api.py` | 21 | 21 | 0 | HTTP/API integration & system, **currency endpoints** |
+
+**Multi-currency tests added in the maintenance round (22 new):**
+conversion via USD pivot, round-trip accuracy, rejection of unsupported codes,
+conversion-weighted analytics (mixed USD/PKR/EUR totals), native per-currency
+breakdown preserved, base-currency switching re-converting every figure,
+`amount_base` annotation on the transaction view, **cross-currency budget alerts**
+(budget in USD vs spending in PKR and vice-versa), rate-table shape, converted
+CSV column, `/api/convert`, `/api/settings/base_currency` (incl. 401 when
+unauthenticated), and mixed-currency CSV import.
 
 **Code coverage (branch-aware via `pytest-cov`):**
 
 | Module | Statements | Coverage |
 |--------|-----------|----------|
-| `app/backend/db.py` | 94 | 94% |
-| `app/backend/logic.py` | 135 | 99% |
-| `app/backend/server.py` | 110 | 87% |
-| **TOTAL** | **339** | **94%** |
+| `app/backend/db.py` | 94 | 97% |
+| `app/backend/logic.py` | 203 | 97% |
+| `app/backend/server.py` | 145 | 89% |
+| **TOTAL** | **442** | **94%** |
 
-> Missing lines are mostly the Flask `app.run` entrypoint and a few defensive branches —
-> acceptable; the business-critical `logic` layer is at 99%.
+> Statements grew from 339 → **442** with the multi-currency feature; coverage held at
+> **94%** overall and *improved* to **97%** in both `db.py` and `logic.py` (the
+> business-critical layers). Remaining misses are the Flask `app.run` entrypoint and
+> defensive error branches.
 
 ---
 

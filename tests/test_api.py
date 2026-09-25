@@ -96,3 +96,132 @@ def test_delete_transaction(client):
 def test_currencies_endpoint(client):
     r = client.get("/api/currencies").get_json()
     assert "USD" in r["rates"] and "PKR" in r["rates"]
+
+
+# ============ MULTI-CURRENCY API (integration tests) ============
+def test_currencies_payload_is_rich(client):
+    d = client.get("/api/currencies").get_json()
+    assert d["base_currency"] == "USD" and d["base_symbol"] == "$"
+    assert "PKR" in d["currencies"] and "EUR" in d["currencies"]
+    assert d["symbols"]["PKR"] == "Rs"
+    row = next(x for x in d["table"] if x["code"] == "PKR")
+    assert row["name"] == "Pakistani Rupee"
+    assert row["one_base_equals"] > 100          # 1 USD is many PKR
+
+
+def test_register_with_base_currency(client):
+    r = client.post("/api/register", json={"username": "pkr_user",
+                                           "password": "pw",
+                                           "base_currency": "PKR"})
+    assert r.status_code == 201
+    assert r.get_json()["base_currency"] == "PKR"
+    d = client.post("/api/login", json={"username": "pkr_user",
+                                        "password": "pw"}).get_json()
+    assert d["base_currency"] == "PKR" and d["base_symbol"] == "Rs"
+
+
+def test_register_rejects_unknown_currency(client):
+    r = client.post("/api/register", json={"username": "x", "password": "y",
+                                           "base_currency": "XYZ"})
+    assert r.status_code == 400
+    assert "Unsupported currency" in r.get_json()["error"]
+
+
+def test_convert_endpoint(client):
+    d = client.post("/api/convert", json={"amount": 100, "from": "USD",
+                                          "to": "PKR"}).get_json()
+    assert d["result"] == pytest.approx(100 / 0.0036, rel=1e-4)
+    assert d["from_symbol"] == "$" and d["to_symbol"] == "Rs"
+
+
+def test_convert_endpoint_validates(client):
+    assert client.post("/api/convert", json={"amount": 1, "from": "USD",
+                                             "to": "XYZ"}).status_code == 400
+    assert client.post("/api/convert", json={"amount": "abc", "from": "USD",
+                                             "to": "PKR"}).status_code == 400
+
+
+def test_change_base_currency_endpoint(client):
+    uid = register_and_login(client, "cur_user")
+    h = {"X-User-Id": str(uid)}
+    r = client.post("/api/settings/base_currency", headers=h,
+                    json={"base_currency": "EUR"})
+    assert r.status_code == 200
+    assert r.get_json()["base_currency"] == "EUR"
+    assert client.get("/api/settings", headers=h).get_json()["base_currency"] == "EUR"
+
+
+def test_change_base_currency_requires_auth(client):
+    assert client.post("/api/settings/base_currency",
+                       json={"base_currency": "EUR"}).status_code == 401
+    assert client.get("/api/settings").status_code == 401
+
+
+def test_summary_converts_mixed_currencies(client):
+    """System test: spend in PKR + EUR, report in USD."""
+    uid = register_and_login(client, "mix_user")
+    h = {"X-User-Id": str(uid)}
+    for cur, amt in (("PKR", 5000), ("EUR", 100), ("USD", 50)):
+        client.post("/api/transactions", headers=h,
+                    json={"date": "2026-09-01", "description": f"in {cur}",
+                          "amount": amt, "type": "expense",
+                          "category": "Food", "currency": cur})
+    d = client.get("/api/summary?month=2026-09", headers=h).get_json()
+    expected = 5000 * 0.0036 + 100 * 1.08 + 50 * 1.0
+    assert d["base_currency"] == "USD"
+    assert d["total_expense"] == pytest.approx(expected, rel=1e-4)
+    assert d["foreign_count"] == 2
+    assert set(d["by_currency"].keys()) == {"PKR", "EUR", "USD"}
+    assert d["by_currency"]["PKR"]["expense"] == 5000        # native preserved
+
+
+def test_switching_base_currency_changes_reported_totals(client):
+    uid = register_and_login(client, "switch_user")
+    h = {"X-User-Id": str(uid)}
+    client.post("/api/transactions", headers=h,
+                json={"date": "2026-09-01", "description": "salary",
+                      "amount": 1000, "type": "income", "currency": "USD"})
+    usd_total = client.get("/api/summary?month=2026-09",
+                           headers=h).get_json()["total_income"]
+    client.post("/api/settings/base_currency", headers=h,
+                json={"base_currency": "PKR"})
+    pkr = client.get("/api/summary?month=2026-09", headers=h).get_json()
+    assert usd_total == pytest.approx(1000, rel=1e-6)
+    assert pkr["total_income"] == pytest.approx(1000 / 0.0036, rel=1e-4)
+    assert pkr["base_symbol"] == "Rs"
+
+
+def test_transactions_endpoint_returns_converted_amount(client):
+    uid = register_and_login(client, "view_user")
+    h = {"X-User-Id": str(uid)}
+    client.post("/api/transactions", headers=h,
+                json={"date": "2026-09-01", "description": "chai",
+                      "amount": 500, "type": "expense", "currency": "PKR"})
+    row = client.get("/api/transactions?month=2026-09", headers=h).get_json()[0]
+    assert row["amount"] == 500 and row["currency"] == "PKR"
+    assert row["amount_base"] == pytest.approx(1.8, abs=0.01)
+    assert row["is_foreign"] is True
+    assert row["currency_symbol"] == "Rs" and row["base_symbol"] == "$"
+
+
+def test_export_csv_has_converted_column(client):
+    uid = register_and_login(client, "csv_ccy")
+    h = {"X-User-Id": str(uid)}
+    client.post("/api/transactions", headers=h,
+                json={"date": "2026-09-01", "description": "a", "amount": 1000,
+                      "type": "expense", "currency": "PKR"})
+    text = client.get("/api/export?month=2026-09", headers=h).get_data(as_text=True)
+    assert "amount_in_USD" in text.splitlines()[0]
+
+
+def test_import_csv_with_mixed_currencies(client):
+    uid = register_and_login(client, "imp_ccy")
+    h = {"X-User-Id": str(uid)}
+    csv_text = ("date,description,amount,type,category,currency\n"
+                "2026-09-01,lunch,500,expense,Food,PKR\n"
+                "2026-09-02,coffee,5,expense,Food,USD\n"
+                "2026-09-03,bad,row,notanumber,expense,Food,USD\n")
+    d = client.post("/api/import", headers=h, json={"csv": csv_text}).get_json()
+    assert d["imported"] == 2                     # malformed row skipped
+    s = client.get("/api/summary?month=2026-09", headers=h).get_json()
+    assert s["total_expense"] == pytest.approx(500 * 0.0036 + 5, rel=1e-4)

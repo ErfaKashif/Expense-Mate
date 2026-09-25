@@ -127,16 +127,115 @@ def test_import_csv_wrong_headers(logic, user):
         logic.import_csv(user, "foo,bar\n1,2\n")
 
 
-# --------- multi-currency ---------
+# --------- MULTI-CURRENCY (Phase 5 adaptive maintenance: full conversion) ---------
 def test_currency_conversion(logic):
-    # 100 USD -> convert to PKR via logic._convert
-    pkr = logic._convert(100, "USD", "PKR")
+    # 100 USD -> PKR via the public convert() helper (pivots through USD)
+    pkr = logic.convert(100, "USD", "PKR")
     assert pkr == pytest.approx(100 / 0.0036)
+    # legacy private alias still works (back-compat)
+    assert logic._convert(100, "USD", "PKR") == pytest.approx(pkr)
 
 
-def test_currency_stored_and_summed(logic, user):
+def test_conversion_round_trip(logic):
+    usd = logic.convert(250, "PKR", "USD")
+    back = logic.convert(usd, "USD", "PKR")
+    assert back == pytest.approx(250, rel=1e-6)
+
+
+def test_unsupported_currency_rejected_on_convert_settings(logic, user):
+    with pytest.raises(ValidationError):
+        logic.set_base_currency(user, "XYZ")
+
+
+def test_analytics_convert_to_base_currency(logic, user):
+    """Mixing currencies must produce a CONVERTED total, not a naive sum."""
     logic.add_transaction(user, "2026-09-01", "a", 100, "income", currency="USD")
     logic.add_transaction(user, "2026-09-01", "b", 50, "income", currency="PKR")
     s = logic.category_summary(user, month="2026-09")
-    # summed in native amounts (analytics keep native currency for simplicity)
-    assert s["total_income"] == 150
+    # 50 PKR = 50 * 0.0036 = 0.18 USD  ->  total 100.18 (NOT 150)
+    assert s["base_currency"] == "USD"
+    assert s["total_income"] == pytest.approx(100.18, abs=0.01)
+    assert s["foreign_count"] == 1
+
+
+def test_native_breakdown_kept_per_currency(logic, user):
+    logic.add_transaction(user, "2026-09-01", "a", 100, "income", currency="USD")
+    logic.add_transaction(user, "2026-09-02", "b", 5000, "expense", currency="PKR")
+    s = logic.category_summary(user, month="2026-09")
+    assert s["by_currency"]["USD"]["income"] == 100
+    assert s["by_currency"]["PKR"]["expense"] == 5000
+    assert s["by_currency"]["PKR"]["symbol"] == "Rs"
+
+
+def test_base_currency_switch_reconverts_everything(logic, user):
+    logic.add_transaction(user, "2026-09-01", "a", 100, "income", currency="USD")
+    logic.add_transaction(user, "2026-09-01", "b", 50, "income", currency="PKR")
+    assert logic.base_currency(user) == "USD"
+    logic.set_base_currency(user, "PKR")
+    assert logic.base_currency(user) == "PKR"
+    s = logic.category_summary(user, month="2026-09")
+    # 100 USD -> 100/0.0036 = 27777.78 PKR, plus native 50 PKR
+    assert s["total_income"] == pytest.approx(100 / 0.0036 + 50, rel=1e-4)
+    assert s["base_symbol"] == "Rs"
+
+
+def test_transactions_view_annotates_converted_amount(logic, user):
+    logic.add_transaction(user, "2026-09-01", "a", 5000, "expense", currency="PKR")
+    rows = logic.transactions_view(user, month="2026-09")
+    assert rows[0]["amount"] == 5000            # native preserved
+    assert rows[0]["currency"] == "PKR"
+    assert rows[0]["amount_base"] == pytest.approx(18.0, abs=0.01)   # 5000*0.0036
+    assert rows[0]["is_foreign"] is True
+    assert rows[0]["currency_symbol"] == "Rs"
+
+
+def test_budget_alert_across_currencies(logic, user):
+    """Budget in USD, spending in PKR -> compared after conversion."""
+    logic.set_budget(user, "Food", "2026-09", 10, currency="USD")
+    logic.add_transaction(user, "2026-09-05", "meal", 5000, "expense",
+                          category="Food", currency="PKR")   # = 18 USD
+    st = logic.budget_status(user, "2026-09")
+    row = st["status"][0]
+    assert row["spent"] == pytest.approx(18.0, abs=0.01)
+    assert row["limit"] == pytest.approx(10.0, abs=0.01)
+    assert row["level"] == "critical"
+    assert row["converted"] is False        # base==budget currency (USD)
+    assert st["alerts"][0]["category"] == "Food"
+
+
+def test_budget_set_in_foreign_currency_converted(logic, user):
+    logic.set_budget(user, "Rent", "2026-09", 90000, currency="PKR")   # = 324 USD
+    logic.add_transaction(user, "2026-09-05", "rent", 300, "expense",
+                          category="Rent", currency="USD")
+    row = logic.budget_status(user, "2026-09")["status"][0]
+    assert row["limit"] == pytest.approx(324.0, abs=0.5)
+    assert row["budget_currency"] == "PKR"
+    assert row["converted"] is True
+    # 300 of 324 = 92.6% -> between WARN_RATIO (80%) and CRITICAL_RATIO (95%)
+    assert row["level"] == "warning"
+    assert 0.80 <= row["ratio"] < 0.95
+
+
+def test_rates_table_shape(logic):
+    t = logic.rates_table("USD")
+    assert t["base"] == "USD" and t["base_symbol"] == "$"
+    codes = [r["code"] for r in t["rates"]]
+    assert "PKR" in codes and "EUR" in codes and "GBP" in codes
+    pkr = next(r for r in t["rates"] if r["code"] == "PKR")
+    assert pkr["per_base"] == pytest.approx(0.0036, abs=1e-4)
+    assert pkr["one_base_equals"] == pytest.approx(1 / 0.0036, rel=1e-3)
+
+
+def test_export_csv_includes_converted_column(logic, user):
+    logic.add_transaction(user, "2026-09-01", "a", 5000, "expense", currency="PKR")
+    text = logic.export_csv(user, month="2026-09")
+    assert "amount_in_USD" in text.splitlines()[0]
+    assert "18.0" in text
+
+
+def test_summary_json_reports_base_currency(logic, user):
+    logic.add_transaction(user, "2026-09-01", "a", 100, "income", currency="USD")
+    d = logic.to_summary_json(user, "2026-09")
+    assert d["base_currency"] == "USD" and d["base_symbol"] == "$"
+    assert "PKR" in d["currencies"]
+    assert d["total_income"] == 100

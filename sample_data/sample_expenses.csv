@@ -9,3 +9,8 @@ date,description,amount,type,category,currency
 2026-09-08,Restaurant dinner,70.00,expense,Dining,USD
 2026-09-09,Freelance project,400.00,income,Freelance,USD
 2026-09-10,New headphones,120.00,expense,Shopping,USD
+2026-09-11,Karachi chai and snacks,2500.00,expense,Dining,PKR
+2026-09-12,Lahore bazar shopping,12000.00,expense,Shopping,PKR
+2026-09-13,Dubai layover meal,95.00,expense,Dining,AED
+2026-09-14,London client payment,320.00,income,Freelance,GBP
+2026-09-15,Berlin conference ticket,180.00,expense,Education,EUR
