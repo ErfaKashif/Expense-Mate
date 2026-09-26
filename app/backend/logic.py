@@ -369,7 +369,13 @@ class Logic:
         Each row may carry its own `currency` column; rows without one default
         to the user's base currency. Malformed rows are skipped, not fatal.
         """
-        reader = csv.DictReader(io.StringIO(raw_text))
+        if raw_text.startswith('\ufeff'):
+            raw_text = raw_text.lstrip('\ufeff')
+        stream = io.StringIO(raw_text)
+        reader = csv.DictReader(stream)
+        if reader.fieldnames:
+            reader.fieldnames = [field.strip().lower() for field in reader.fieldnames if field]
+
         required = {"date", "description", "amount", "type"}
         if not reader.fieldnames or not required.issubset(set(reader.fieldnames)):
             raise ValidationError("CSV must have columns: " + ", ".join(sorted(required)))
@@ -377,17 +383,31 @@ class Logic:
         skipped = 0
         for row in reader:
             try:
+                date_val = row.get("date", "").strip()
+                desc_val = row.get("description", "").strip()
+                amt_val = row.get("amount", "").strip()
+                type_val = row.get("type", "").strip()
+                cat_val = row.get("category", "").strip() if row.get("category") else None
+                cur_val = row.get("currency", "").strip() if row.get("currency") else None
+                if not date_val and not desc_val and not amt_val:
+                    skipped += 1
+                    continue
                 self.add_transaction(
                     user_id,
-                    row["date"], row["description"], row["amount"], row["type"],
-                    category=row.get("category"), currency=row.get("currency") or None,
+                    date_val,
+                    desc_val,
+                    amt_val,
+                    type_val,
+                    category=cat_val,
+                    currency=cur_val or None
+                    ,
                 )
                 count += 1
             except ValidationError:
                 # Skip malformed rows but keep importing the rest.
                 skipped += 1
                 continue
-        return count
+        return count,skipped
 
     # ------------------------------------------------------------------ #
     # Reporting / misc

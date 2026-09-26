@@ -275,6 +275,33 @@ function palette(n) {
 }
 
 /* ---------- transactions ---------- */
+// 1. Define your categories
+const categories = {
+  expense: ["Groceries", "Rent", "Utilities","Dining", "Entertainment","Fitness", "Transport","Food" ,"Misc"],
+  income: ["Salary", "Freelance", "Investments", "Gifts", "Other"]
+};
+
+// 2. Function to populate the category dropdown
+function updateCategories() {
+  const typeSelect = document.getElementById("txType");
+  const catSelect = document.getElementById("txCat");
+
+  // Get the currently selected type (expense or income)
+  const selectedType = typeSelect.value;
+
+  // Clear any existing options
+  catSelect.innerHTML = "";
+
+  // Loop through the relevant array and create option elements
+  categories[selectedType].forEach(category => {
+    const option = document.createElement("option");
+    option.value = category.toLowerCase(); // Value sent to database/array
+    option.textContent = category;         // Text shown to user
+    catSelect.appendChild(option);
+  });
+}
+
+window.addEventListener("DOMContentLoaded", updateCategories);
 async function addTx() {
   const msg = $('txMsg');
   const body = { date: $('txDate').value || new Date().toISOString().slice(0,10),
@@ -345,13 +372,27 @@ async function exportCsv() {
 }
 async function importCsv(ev) {
   const f = ev.target.files[0]; if (!f) return;
-  const text = await f.text();
-  const r = await fetch('/api/import', { method: 'POST', headers: hdr(), body: JSON.stringify({ csv: text }) });
+  let text = await f.text();
+
+  if (text.includes('\t') && !text.includes(',')) {
+    text = text.replace(/\t/g, ',');
+  }
+
+  const r = await fetch('/api/import', {
+    method: 'POST',
+    headers: hdr(),
+    body: JSON.stringify({ csv: text })
+  });
+
   const d = await r.json();
   if (!r.ok) { setMsg($('csvMsg'), d.error || 'Import failed.', false); return; }
-  setMsg($('csvMsg'), `Imported ${d.imported} rows ✓`, true);
+
+  setMsg($('csvMsg'), `Imported ${d.imported} rows, skipped ${d.skipped} invalid rows ✓`, true);
   ev.target.value = '';
-  refresh();
+
+  setTimeout(() => {
+    refresh();
+  }, 300);
 }
 
 /* ---------- init (runs before login too, so the register form has currencies) ---------- */

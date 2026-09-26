@@ -200,8 +200,11 @@ def create_app(db_path=None, testing=False):
             return jsonify({"error": "not authorized"}), 401
         d = request.get_json(silent=True) or {}
         try:
-            n = logic.import_csv(uid, d.get("csv", ""))
-            return jsonify({"imported": n})
+            imported_count, skipped_count = logic.import_csv(uid, d.get("csv", ""))
+            return jsonify({
+                "imported": imported_count,
+                "skipped": skipped_count
+            })
         except ValidationError as e:
             return jsonify({"error": str(e)}), 400
 
