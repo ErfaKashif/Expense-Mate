@@ -84,6 +84,7 @@ class Database:
                     category_id INTEGER NOT NULL REFERENCES categories(id),
                     month       TEXT NOT NULL,          -- 'YYYY-MM'
                     amount      REAL NOT NULL CHECK (amount >= 0),
+                    remaining_amount REAL NOT NULL CHECK (amount >= 0),
                     currency    TEXT NOT NULL DEFAULT 'USD',
                     UNIQUE (user_id, category_id, month)
                 );
@@ -174,15 +175,19 @@ class Database:
             rows = conn.execute(sql, params).fetchall()
             return [dict(r) for r in rows]
 
-    def get_transaction(self, tx_id):
+    def get_transaction(self, transaction_id):
+        """Fetches a raw transaction row by its primary key ID."""
         with self.connect() as conn:
-            row = conn.execute("SELECT * FROM transactions WHERE id = ?", (tx_id,)).fetchone()
-            return dict(row) if row else None
+            sql = """SELECT user_id, amount, type, category_id, currency, date 
+                     FROM transactions 
+                     WHERE id = ?"""
+            return conn.execute(sql, [transaction_id]).fetchone()
 
-    def delete_transaction(self, tx_id):
+    def delete_transaction(self, transaction_id):
+        """Performs the raw row deletion from the database table."""
         with self.connect() as conn:
-            cur = conn.execute("DELETE FROM transactions WHERE id = ?", (tx_id,))
-            return cur.rowcount > 0
+            sql = "DELETE FROM transactions WHERE id = ?"
+            conn.execute(sql, [transaction_id])
 
     def counts(self):
         with self.connect() as conn:
@@ -192,24 +197,76 @@ class Database:
     # ------------------------------------------------------------------ #
     # Budgets
     # ------------------------------------------------------------------ #
-    def set_budget(self, user_id, category_id, month, amount, currency="USD"):
+    def set_budget(self, user_id, category_id, month, amount, currency):
         with self.connect() as conn:
-            conn.execute(
-                """INSERT INTO budgets (user_id, category_id, month, amount, currency)
-                   VALUES (?, ?, ?, ?, ?)
-                   ON CONFLICT(user_id, category_id, month)
-                   DO UPDATE SET amount = excluded.amount, currency = excluded.currency""",
-                (user_id, category_id, month, amount, currency),
-            )
+            # Include remaining_amount in the column list and pass it as a parameter
+            sql = """INSERT INTO budgets (user_id, category_id, month, amount, remaining_amount, currency)
+                     VALUES (?, ?, ?, ?, ?, ?)
+                     ON CONFLICT(user_id, category_id, month) 
+                     DO UPDATE SET 
+                        amount = excluded.amount,
+                        remaining_amount = excluded.remaining_amount,
+                        currency = excluded.currency"""
 
-    def get_budgets(self, user_id, month=None):
+            # Pass amount twice: once for the initial 'amount', once for 'remaining_amount'
+            params = [user_id, category_id, month, amount, amount, currency]
+
+            conn.execute(sql, params)
+
+    # Verify your summary framework or query structure includes remaining values:
+    def get_budgets(self, user_id, month):
         with self.connect() as conn:
-            sql = """SELECT b.*, c.name AS category_name
-                     FROM budgets b JOIN categories c ON c.id = b.category_id
-                     WHERE b.user_id = ?"""
-            params = [user_id]
-            if month:
-                sql += " AND b.month = ?"
-                params.append(month)
-            rows = conn.execute(sql, params).fetchall()
+            sql = """SELECT b.id, c.name as category_name, b.amount, b.remaining_amount, b.currency 
+                     FROM budgets b
+                     JOIN categories c ON b.category_id = c.id
+                     WHERE b.user_id = ? AND b.month = ?"""
+            rows = conn.execute(sql, [user_id, month]).fetchall()
             return [dict(r) for r in rows]
+
+    def get_budget_remaining_amount(self, user_id, month, category):
+        with self.connect() as conn:
+            sql = """SELECT remaining_amount
+                     FROM budgets b 
+                     WHERE b.category_id = (SELECT id FROM categories WHERE name = ?) 
+                       AND b.user_id = ? 
+                       AND b.month = ?"""
+            params = [category, user_id, month]
+            row = conn.execute(sql, params).fetchone()
+            return row[0] if row else 0.0
+
+    def get_single_budget(self, user_id, month, category_id):
+        """Fetches a specific target budget profile row."""
+        with self.connect() as conn:
+            sql = """SELECT id, amount, remaining_amount, currency 
+                     FROM budgets 
+                     WHERE user_id = ? AND month = ? AND category_id = ?"""
+            row = conn.execute(sql, [user_id, month, category_id]).fetchone()
+            if row:
+                return {"id": row[0], "amount": row[1], "remaining_amount": row[2], "currency": row[3]}
+            return None
+
+    def update_budget_remaining(self, budget_id, new_remaining):
+        """Persists the dynamic remaining delta value changes straight to the DB matrix."""
+        with self.connect() as conn:
+            sql = """UPDATE budgets 
+                     SET remaining_amount = ? 
+                     WHERE id = ?"""
+            conn.execute(sql, [new_remaining, budget_id])
+
+    def delete_budget(self, budget_id, user_id):
+        """Permanently deletes a budget row ensuring it belongs to the requesting user."""
+        with self.connect() as conn:
+            # We check user_id to prevent users from deleting each other's budgets
+            sql = "DELETE FROM budgets WHERE id = ? AND user_id = ?"
+            cursor = conn.execute(sql, [budget_id, user_id])
+            return cursor.rowcount > 0
+
+    def delete_budget_by_category(self, user_id, month, category_name):
+        """Deletes a budget entry matching its unique layout fields directly."""
+        with self.connect() as conn:
+            sql = """DELETE FROM budgets 
+                     WHERE user_id = ? 
+                       AND month = ? 
+                       AND category_id = (SELECT id FROM categories WHERE name = ?)"""
+            cursor = conn.execute(sql, [user_id, month, category_name])
+            return cursor.rowcount > 0

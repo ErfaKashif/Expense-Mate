@@ -138,24 +138,34 @@ def create_app(db_path=None, testing=False):
 
     @app.post("/api/transactions")
     def add_transaction():
+        d=request.json
         uid = _uid()
         if not uid:
             return jsonify({"error": "not authorized"}), 401
-        d = request.get_json(silent=True) or {}
-        try:
-            tid = logic.add_transaction(
-                uid, d.get("date", datetime.now().strftime("%Y-%m-%d")),
-                d.get("description"), d.get("amount"), d.get("type"),
-                d.get("category"), d.get("currency"),
-            )
-            return jsonify({"id": tid}), 201
-        except ValidationError as e:
-            return jsonify({"error": str(e)}), 400
+        # Unpack both values returned from your upgraded logic method
+        tx_id, alert = logic.add_transaction(
+            user_id=uid,
+            date=d.get("date"),
+            description=d.get("description"),
+            amount=d.get("amount"),
+            type=d.get("type"),
+            category=d.get("category"),
+            currency=d.get("currency")
+        )
+
+        return jsonify({
+            "status": "success",
+            "id": tx_id,
+            "alert": alert  # Frontend can inspect this to launch an instantaneous alert box
+        }), 201
 
     @app.delete("/api/transactions/<int:tid>")
     def delete_transaction(tid):
         try:
-            logic.delete_transaction(tid)
+            u_id=_uid()
+            if not u_id:
+                return jsonify({"error": "not authorized"}), 401
+            logic.delete_transaction(u_id,tid)
             return jsonify({"ok": True})
         except ValidationError as e:
             return jsonify({"error": str(e)}), 404
@@ -181,6 +191,23 @@ def create_app(db_path=None, testing=False):
             return jsonify({"ok": True}), 201
         except ValidationError as e:
             return jsonify({"error": str(e)}), 400
+
+    # In app/backend/server.py
+
+    @app.route('/api/budgets/by-category', methods=['DELETE'])
+    def delete_budget_by_category_route():
+        uid = _uid()
+        if not uid:
+            return jsonify({"error": "Unauthorized Access"}), 401
+        d = request.json
+        category_name = d.get("category")
+        month = d.get("month")
+        if not category_name or not month:
+            return jsonify({"error": "Missing parameters"}), 400
+        success = logic.delete_budget_by_category(uid, month, category_name)
+        if success:
+            return jsonify({"status": "success", "message": "Budget deleted successfully."}), 200
+        return jsonify({"error": "Budget record not found."}), 404
 
     # ================== CSV ============================================== #
     @app.get("/api/export")

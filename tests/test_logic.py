@@ -8,10 +8,12 @@ from app.backend.logic import Logic, ValidationError
 
 
 # --------- validation ---------
-def test_add_income(logic, user):
-    tid = logic.add_transaction(user, "2026-09-01", "Salary", 1000, "income")
-    assert tid > 0
+# Inside tests/test_logic.py
 
+def test_add_income(logic, user):
+    # Unpack the tuple value directly to grab the returned integer ID
+    tid, alert = logic.add_transaction(user, "2026-09-01", "Salary", 1000, "income", category="Salary", currency="USD")
+    assert tid > 0
 
 def test_negative_amount_rejected(logic, user):
     with pytest.raises(ValidationError):
@@ -104,13 +106,14 @@ def test_export_csv_roundtrip(logic, user):
     assert "date,description,amount,type,category,currency" in csv_text
     assert "dinner" in csv_text
 
-
 def test_import_csv(logic, user):
     csv_text = ("date,description,amount,type,category,currency\n"
                 "2026-09-01,rice,25,expense,Food,USD\n"
                 "2026-09-02,taxi,15,expense,Transport,USD\n")
-    n = logic.import_csv(user, csv_text)
-    assert n == 2
+    # Unpack both the import count and skipped row count metrics
+    imported, skipped = logic.import_csv(user, csv_text)
+    assert imported == 2
+    assert skipped == 0
     assert logic.category_summary(user, month="2026-09")["total_expense"] == 40
 
 
@@ -118,8 +121,8 @@ def test_import_csv_skips_bad_rows(logic, user):
     csv_text = ("date,description,amount,type\n"
                 "2026-09-01,good,25,expense\n"
                 "not-a-date,bad,-5,expense\n")
-    n = logic.import_csv(user, csv_text)
-    assert n == 1
+    n,skipped = logic.import_csv(user, csv_text)
+    assert n == 1 and skipped==1
 
 
 def test_import_csv_wrong_headers(logic, user):
@@ -239,3 +242,51 @@ def test_summary_json_reports_base_currency(logic, user):
     assert d["base_currency"] == "USD" and d["base_symbol"] == "$"
     assert "PKR" in d["currencies"]
     assert d["total_income"] == 100
+
+
+def test_add_transaction_updates_budget_remaining_and_returns_alert(logic, user):
+    """Validates that creating an expense immediately reduces remaining_amount and returns an alert."""
+    logic.set_budget(user, "Food", "2026-11", 100.0, currency="USD")
+
+    # Log an expense of 80 against the 100 USD threshold limit
+    tx_id, alert = logic.add_transaction(user, "2026-11-03", "Dinner", 80.0, "expense", category="Food", currency="USD")
+
+    # Verify the inline budget row was modified in real-time
+    status = logic.budget_status(user, "2026-11")
+    food_budget = status["status"][0]
+    assert food_budget["remaining"] == 20.0
+    assert food_budget["spent"] == 80.0
+
+    # 80/100 = 80%. Assuming WARN_RATIO <= 0.80, a localized notification must be generated
+    assert alert is not None
+    assert alert["level"] == "warning"
+    assert "Food" in alert["message"]
+
+
+def test_add_transaction_normalizes_category_casing_to_title_case(logic, user):
+    """Validates that lower-case categories from javascript ('food') are title-cased ('Food')."""
+    logic.set_budget(user, "Food", "2026-11", 100.0, currency="USD")
+
+    # Send lowercase category string matching frontend select elements
+    tx_id, alert = logic.add_transaction(user, "2026-11-03", "Snack", 10.0, "expense", category="food", currency="USD")
+
+    status = logic.budget_status(user, "2026-11")
+    food_budget = status["status"][0]
+    assert food_budget["category"] == "Food"
+    assert food_budget["spent"] == 10.0  # Verifies case matching works correctly
+
+
+def test_delete_transaction_restores_budget_remaining_amount(logic, user):
+    """Validates that deleting an expense automatically credits back the budget remaining_amount."""
+    logic.set_budget(user, "Food", "2026-11", 100.0, currency="USD")
+    tx_id, _ = logic.add_transaction(user, "2026-11-03", "Lunch", 40.0, "expense", category="Food", currency="USD")
+
+    # Verify deduction occurred
+    assert logic.budget_status(user, "2026-11")["status"][0]["remaining"] == 60.0
+
+    # Trigger your updated conversion-aware deletion process
+    success = logic.delete_transaction(user, tx_id)
+    assert success is True
+
+    # Verify the remaining headroom balance has rolled back up to 100
+    assert logic.budget_status(user, "2026-11")["status"][0]["remaining"] == 100.0

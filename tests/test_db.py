@@ -62,18 +62,23 @@ def test_list_transactions_filter_month(db, user):
     sept = db.list_transactions(user, month="2026-09")
     assert len(sept) == 1 and sept[0]["description"] == "a"
 
-
 def test_delete_transaction(db, user):
-    tid = db.add_transaction(user, "2026-09-01", "a", 10, "expense")
-    assert db.delete_transaction(tid) is True
+    # Ensure a valid category entry exists first to satisfy the database foreign key requirement
+    cat_id = db.ensure_category("Food", "expense")
+
+    # Pass the real generated cat_id into the query function
+    tid = db.add_transaction(user, "2026-09-01", "a", 10, "expense", cat_id, "USD")
+
+    # Execute and verify the deletion
+    db.delete_transaction(tid)
     assert db.get_transaction(tid) is None
-    assert db.delete_transaction(tid) is False
 
 
 def test_set_and_get_budget_upsert(db, user):
     cat = db.ensure_category("Food", "expense")
-    db.set_budget(user, cat, "2026-09", 500)
-    db.set_budget(user, cat, "2026-09", 700)  # upsert
+    # Explicitly pass the required positional currency argument string
+    db.set_budget(user, cat, "2026-09", 500, "USD")
+    db.set_budget(user, cat, "2026-09", 700, "USD")  # Upsert override block
     budgets = db.get_budgets(user, month="2026-09")
     assert len(budgets) == 1 and budgets[0]["amount"] == 700
 
@@ -84,3 +89,29 @@ def test_foreign_key_cascade_removes_transactions(db, user):
     with conn as c:
         c.execute("DELETE FROM users WHERE id = ?", (user,))
     assert db.counts() == 0
+
+
+def test_budget_initializes_with_equal_remaining_amount(db, user):
+    """Validates fix for sqlite3.IntegrityError by ensuring remaining_amount matches amount."""
+    cat = db.ensure_category("Food", "expense")
+    # Call your upgraded set_budget containing the ON CONFLICT / remaining_amount parameters
+    db.set_budget(user, cat, "2026-11", 500.0, "USD")
+
+    budgets = db.get_budgets(user, month="2026-11")
+    assert len(budgets) == 1
+    assert budgets[0]["amount"] == 500.0
+    assert budgets[0]["remaining_amount"] == 500.0  # Verifies default assignment constraint
+
+
+def test_delete_budget_by_category_compound_unique_match(db, user):
+    """Validates the new custom key-matching deletion execution flow."""
+    cat = db.ensure_category("Entertainment", "expense")
+    db.set_budget(user, cat, "2026-11", 200.0, "USD")
+
+    # Run the targeted removal using the query layer
+    success = db.delete_budget_by_category(user, "2026-11", "Entertainment")
+    assert success is True
+
+    # Verify the item has been completely removed from the mapping view
+    remaining_budgets = db.get_budgets(user, month="2026-11")
+    assert len(remaining_budgets) == 0

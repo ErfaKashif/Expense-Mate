@@ -212,3 +212,30 @@ h4 { margin: 0; }
 .ccy-code { font-weight: 800; color: var(--blue-600); font-size: 15px; }
 .ccy-count { color: var(--muted); font-size: 11px; }
 .ccy-line { display: flex; justify-content: space-between; font-size: 13px; color: var(--muted); padding: 2px 0; }
+/* Style for the budget delete button */
+.del-budget {
+  margin-left: 12px;
+  cursor: pointer;
+  color: #a6b3d6; /* Muted color matching your palette */
+  font-weight: bold;
+  transition: color 0.2s ease, transform 0.1s ease;
+  display: inline-block;
+}
+
+/* Red hover effect when the user intends to delete a budget */
+.del-budget:hover {
+  color: #d9534f; /* Danger red */
+  transform: scale(1.2); /* Subtle pop effect */
+}
+
+/* Ensure the budget top header aligns nicely with the new item */
+.budget-top {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.budget-top > div {
+  display: flex;
+  align-items: center;
+}

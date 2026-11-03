@@ -189,24 +189,122 @@ class Logic:
     # ------------------------------------------------------------------ #
     def add_transaction(self, user_id, date, description, amount, type,
                         category=None, currency=None):
-        """Validated add of an income/expense record. Returns new id."""
+        """Validated add of an income/expense record. Returns (new_id, alert_dict_or_none)."""
         user = self.db.get_user(user_id)
         if not user:
             raise ValidationError("User not found.")
+
         date = self._validate_date(date)
         amount = self._validate_amount(amount, type)
         currency = self._normalise(currency or user["base_currency"])
+
         if not description or not description.strip():
             raise ValidationError("Description is required.")
-        kind = type
-        category = (category or "").strip() or ("Income" if type == "income" else "Misc")
-        cat_id = self.db.ensure_category(category, kind)
-        return self.db.add_transaction(user_id, date, description.strip(),
-                                       amount, type, cat_id, currency)
 
-    def delete_transaction(self, tx_id):
-        if not self.db.delete_transaction(tx_id):
-            raise ValidationError("Transaction not found.")
+        kind = type
+        category = (category or "").strip().title() or ("Income" if type == "income" else "Misc")
+        cat_id = self.db.ensure_category(category, kind)
+
+        # 1. Insert the transaction records into the DB
+        tx_id = self.db.add_transaction(user_id, date, description.strip(),
+                                        amount, type, cat_id, currency)
+
+        alert = None
+
+        # 2. Intercept and update budget remaining_amount if it's an expense
+        if type == "income":
+            return tx_id, alert
+
+        # Extract year-month ('YYYY-MM') from the validated date string
+        month = date[:7]
+
+        # Query your db layer for this specific category budget row
+        # (Assumes your db layer has a get_single_budget method or similar)
+        budget = self.db.get_single_budget(user_id, month, cat_id)
+
+        if budget:
+            # Convert transaction amount into the budget's target currency
+            b_cur = budget["currency"].upper()
+            tx_cur = currency.upper()
+
+            # Convert the transaction deduction to budget currency units
+            converted_deduction = self.convert(float(amount), tx_cur, b_cur)
+
+            # Calculate new remaining amount
+            new_remaining = round(float(budget["remaining_amount"]) - converted_deduction, 2)
+
+            # Update the row in the budgets table directly
+            self.db.update_budget_remaining(budget["id"], new_remaining)
+
+            # 3. Trigger immediate runtime alert calculation
+            limit = float(budget["amount"])
+            if limit > 0:
+                total_spent = limit - new_remaining
+                ratio = round(total_spent / limit, 4)
+
+                # Determine threshold triggers matching your warning constants
+                level = "ok"
+                if ratio >= CRITICAL_RATIO:
+                    level = "critical"
+                elif ratio >= WARN_RATIO:
+                    level = "warning"
+
+                if level != "ok":
+                    symbol = self.symbol(b_cur)
+                    total_spent_rounded = round(total_spent, 2)
+                    limit_rounded = round(limit, 2)
+
+                    msg = (f"You have exceeded {int(ratio * 100)}% of the budget for '{category}' "
+                           f"(spent {symbol}{total_spent_rounded} of {symbol}{limit_rounded})."
+                           if level == "critical" else
+                           f"Budget for '{category}' is at {int(ratio * 100)}% "
+                           f"({symbol}{total_spent_rounded} of {symbol}{limit_rounded}).")
+
+                    alert = {
+                        "category": category,
+                        "level": level,
+                        "message": msg
+                    }
+
+        return tx_id, alert
+
+    # In app/backend/logic.py
+
+    def delete_transaction(self, user_id, tx_id):
+        """Intercepts deletion to safely restore budget remaining amounts using logic layer conversion tools."""
+        # 1. Fetch transaction metadata from the DB layer first
+        tx = self.db.get_transaction(tx_id)
+        if not tx:
+            return False
+
+        tx_amount = float(tx["amount"])
+        tx_type = tx["type"]
+        category_id = tx["category_id"]
+        tx_currency = tx["currency"].upper()
+        month = tx["date"][:7]  # Extracts 'YYYY-MM'
+
+        # 2. Trigger the row deletion
+        self.db.delete_transaction(tx_id)
+
+        # 3. If it was an income record, no budget modifications are required
+        if tx_type == "income":
+            return True
+
+        # 4. If it was an expense record, locate and credit back the corresponding budget item
+        budget = self.db.get_single_budget(user_id, month, category_id)
+        if budget:
+            b_currency = budget["currency"].upper()
+
+            # Safe execution: convert using the logic layer's native convert tool
+            restored_credit = self.convert(tx_amount, tx_currency, b_currency)
+
+            # Add the transaction value back into the budget remaining headroom pool
+            new_remaining = round(float(budget["remaining_amount"]) + restored_credit, 2)
+
+            # Persist the structural change directly back into the database
+            self.db.update_budget_remaining(budget["id"], new_remaining)
+
+        return True
 
     def transactions_view(self, user_id, month=None, type=None):
         """Transaction rows annotated with the amount converted to base
@@ -345,6 +443,12 @@ class Logic:
         return {"month": month, "status": status, "alerts": alerts,
                 "currency": base, "symbol": symbol}
 
+    def delete_budget(self, budget_id, user_id):
+        """Business logic entry point for removing a budget constraint."""
+        return self.db.delete_budget(budget_id, user_id)
+    def delete_budget_by_category(self, user_id,budget_category,month):
+        """Business logic entry point for removing a budget constraint."""
+        return self.db.delete_budget_by_category(user_id,budget_category,month)
     # ------------------------------------------------------------------ #
     # CSV import / export
     # ------------------------------------------------------------------ #
