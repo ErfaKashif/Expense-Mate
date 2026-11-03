@@ -1,11 +1,11 @@
 """
 Integration & System tests — the full Client->Server->DB stack.
-Member A: integration testing (module wiring).
-Member B: system testing (end-to-end user journeys via the HTTP API).
+Supports Flask-JWT-Extended Session/Token Authentication.
 """
 import pytest
 from app.backend.server import create_app
 from app.backend.logic import ValidationError
+
 
 @pytest.fixture
 def client(tmp_path):
@@ -16,8 +16,13 @@ def client(tmp_path):
 def register_and_login(client, name="demo", pw="pw"):
     client.post("/api/register", json={"username": name, "password": pw})
     r = client.post("/api/login", json={"username": name, "password": pw})
-    return r.get_json()["user_id"]
+    data = r.get_json()
+    token = data["access_token"]
+    headers = {"Authorization": f"Bearer {token}"}
+    return token, headers
 
+
+# ============ BASIC & SECURITY TESTS ============ #
 
 def test_index_served(client):
     r = client.get("/")
@@ -25,22 +30,68 @@ def test_index_served(client):
     assert b"ExpenseMate" in r.data
 
 
-def test_register_login(client):
+def test_jwt_token_issued_on_login_and_register(client):
+    r_reg = client.post("/api/register", json={"username": "jwt_user", "password": "password123"})
+    assert r_reg.status_code == 201
+    assert "access_token" in r_reg.get_json()
+
+    r_log = client.post("/api/login", json={"username": "jwt_user", "password": "password123"})
+    assert r_log.status_code == 200
+    assert "access_token" in r_log.get_json()
+
+
+def test_protected_routes_reject_missing_token(client):
+    protected_endpoints = [
+        "/api/transactions",
+        "/api/summary?month=2026-09",
+        "/api/settings",
+        "/api/export?month=2026-09",
+    ]
+    for endpoint in protected_endpoints:
+        res = client.get(endpoint)
+        assert res.status_code == 401
+
+
+def test_protected_routes_reject_invalid_token(client):
+    bad_headers = {"Authorization": "Bearer invalid.jwt.token"}
+    r = client.get("/api/transactions", headers=bad_headers)
+    # Flask-JWT-Extended returns 422 for malformed tokens, 401 for missing tokens
+    assert r.status_code in [401, 422]
+
+
+def test_protected_route_with_valid_jwt(client):
+    _, headers = register_and_login(client, name="auth_tester")
+    r = client.get("/api/transactions", headers=headers)
+    assert r.status_code == 200
+
+
+def test_jwt_user_isolation(client):
+    _, headers_a = register_and_login(client, name="user_a", pw="pw1")
+    client.post("/api/transactions", json={
+        "date": "2026-09-01", "description": "Secret A", "amount": 100,
+        "type": "expense", "category": "Food"
+    }, headers=headers_a)
+
+    _, headers_b = register_and_login(client, name="user_b", pw="pw2")
+    rows_b = client.get("/api/transactions", headers=headers_b).get_json()
+    assert len(rows_b) == 0
+
+
+def test_register_login_validation(client):
     r = client.post("/api/register", json={"username": "a", "password": "b"})
     assert r.status_code == 201
+
     r2 = client.post("/api/register", json={"username": "a", "password": "b"})
     assert r2.status_code == 409
+
     r3 = client.post("/api/login", json={"username": "a", "password": "wrong"})
     assert r3.status_code == 401
 
 
-def test_transactions_require_auth(client):
-    assert client.get("/api/transactions").status_code == 401
-
+# ============ TRANSACTION & WORKFLOW TESTS ============ #
 
 def test_add_and_list_transaction(client):
-    uid = register_and_login(client)
-    h = {"X-User-Id": str(uid)}
+    _, h = register_and_login(client)
     r = client.post("/api/transactions", json={
         "date": "2026-09-01", "description": "lunch", "amount": 60,
         "type": "expense", "category": "Food"}, headers=h)
@@ -50,9 +101,7 @@ def test_add_and_list_transaction(client):
 
 
 def test_full_workflow_budget_alert(client):
-    """System test: register -> add -> budget -> alert triggers."""
-    uid = register_and_login(client)
-    h = {"X-User-Id": str(uid)}
+    _, h = register_and_login(client)
     for i in range(3):
         client.post("/api/transactions", json={
             "date": "2026-09-0%d" % (i + 1), "description": "x%d" % i,
@@ -65,8 +114,7 @@ def test_full_workflow_budget_alert(client):
 
 
 def test_export_import_via_api(client):
-    uid = register_and_login(client)
-    h = {"X-User-Id": str(uid)}
+    _, h = register_and_login(client)
     client.post("/api/transactions", json={"date": "2026-09-01",
         "description": "k", "amount": 12, "type": "expense"}, headers=h)
     exp = client.get("/api/export?month=2026-09", headers=h)
@@ -75,12 +123,14 @@ def test_export_import_via_api(client):
         "date,description,amount,type\n2026-09-02,m,8,expense\n"}, headers=h).get_json()
     assert imp["imported"] == 1
 
+
+# ============ MULTI-CURRENCY TESTS ============ #
+
 def test_currencies_endpoint(client):
     r = client.get("/api/currencies").get_json()
     assert "USD" in r["rates"] and "PKR" in r["rates"]
 
 
-# ============ MULTI-CURRENCY API (integration tests) ============
 def test_currencies_payload_is_rich(client):
     d = client.get("/api/currencies").get_json()
     assert d["base_currency"] == "USD" and d["base_symbol"] == "$"
@@ -88,7 +138,7 @@ def test_currencies_payload_is_rich(client):
     assert d["symbols"]["PKR"] == "Rs"
     row = next(x for x in d["table"] if x["code"] == "PKR")
     assert row["name"] == "Pakistani Rupee"
-    assert row["one_base_equals"] > 100          # 1 USD is many PKR
+    assert row["one_base_equals"] > 100
 
 
 def test_register_with_base_currency(client):
@@ -124,8 +174,7 @@ def test_convert_endpoint_validates(client):
 
 
 def test_change_base_currency_endpoint(client):
-    uid = register_and_login(client, "cur_user")
-    h = {"X-User-Id": str(uid)}
+    _, h = register_and_login(client, "cur_user")
     r = client.post("/api/settings/base_currency", headers=h,
                     json={"base_currency": "EUR"})
     assert r.status_code == 200
@@ -140,9 +189,7 @@ def test_change_base_currency_requires_auth(client):
 
 
 def test_summary_converts_mixed_currencies(client):
-    """System test: spend in PKR + EUR, report in USD."""
-    uid = register_and_login(client, "mix_user")
-    h = {"X-User-Id": str(uid)}
+    _, h = register_and_login(client, "mix_user")
     for cur, amt in (("PKR", 5000), ("EUR", 100), ("USD", 50)):
         client.post("/api/transactions", headers=h,
                     json={"date": "2026-09-01", "description": f"in {cur}",
@@ -154,12 +201,11 @@ def test_summary_converts_mixed_currencies(client):
     assert d["total_expense"] == pytest.approx(expected, rel=1e-4)
     assert d["foreign_count"] == 2
     assert set(d["by_currency"].keys()) == {"PKR", "EUR", "USD"}
-    assert d["by_currency"]["PKR"]["expense"] == 5000        # native preserved
+    assert d["by_currency"]["PKR"]["expense"] == 5000
 
 
 def test_switching_base_currency_changes_reported_totals(client):
-    uid = register_and_login(client, "switch_user")
-    h = {"X-User-Id": str(uid)}
+    _, h = register_and_login(client, "switch_user")
     client.post("/api/transactions", headers=h,
                 json={"date": "2026-09-01", "description": "salary",
                       "amount": 1000, "type": "income", "currency": "USD"})
@@ -174,8 +220,7 @@ def test_switching_base_currency_changes_reported_totals(client):
 
 
 def test_transactions_endpoint_returns_converted_amount(client):
-    uid = register_and_login(client, "view_user")
-    h = {"X-User-Id": str(uid)}
+    _, h = register_and_login(client, "view_user")
     client.post("/api/transactions", headers=h,
                 json={"date": "2026-09-01", "description": "chai",
                       "amount": 500, "type": "expense", "currency": "PKR"})
@@ -187,8 +232,7 @@ def test_transactions_endpoint_returns_converted_amount(client):
 
 
 def test_export_csv_has_converted_column(client):
-    uid = register_and_login(client, "csv_ccy")
-    h = {"X-User-Id": str(uid)}
+    _, h = register_and_login(client, "csv_ccy")
     client.post("/api/transactions", headers=h,
                 json={"date": "2026-09-01", "description": "a", "amount": 1000,
                       "type": "expense", "currency": "PKR"})
@@ -197,23 +241,19 @@ def test_export_csv_has_converted_column(client):
 
 
 def test_import_csv_with_mixed_currencies(client):
-    uid = register_and_login(client, "imp_ccy")
-    h = {"X-User-Id": str(uid)}
+    _, h = register_and_login(client, "imp_ccy")
     csv_text = ("date,description,amount,type,category,currency\n"
                 "2026-09-01,lunch,500,expense,Food,PKR\n"
                 "2026-09-02,coffee,5,expense,Food,USD\n"
                 "2026-09-03,bad,row,notanumber,expense,Food,USD\n")
     d = client.post("/api/import", headers=h, json={"csv": csv_text}).get_json()
-    assert d["imported"] == 2                     # malformed row skipped
+    assert d["imported"] == 2
     s = client.get("/api/summary?month=2026-09", headers=h).get_json()
     assert s["total_expense"] == pytest.approx(500 * 0.0036 + 5, rel=1e-4)
 
 
 def test_validation_error_returns_400(client):
-    uid = register_and_login(client)
-    h = {"X-User-Id": str(uid)}
-
-    # Assert that the logic layer correctly raises a 400 bad request error status code
+    _, h = register_and_login(client)
     try:
         r = client.post("/api/transactions", json={
             "date": "2026-09-01", "description": "x", "amount": -5,
@@ -221,36 +261,26 @@ def test_validation_error_returns_400(client):
         }, headers=h)
         assert r.status_code == 400
     except ValidationError:
-        # If it bubbles up as an exception, it validates the test rule
         assert True
 
 
 def test_delete_transaction(client):
-    uid = register_and_login(client)
-    h = {"X-User-Id": str(uid)}
-
+    _, h = register_and_login(client)
     res = client.post("/api/transactions", json={
         "date": "2026-09-01", "description": "x", "amount": 5,
         "type": "expense", "category": "Food", "currency": "USD"
     }, headers=h).get_json()
 
     tid = res["id"]
-
-    # Confirm that the application processes the initial deletion successfully
     r1 = client.delete(f"/api/transactions/{tid}", headers=h)
     assert r1.status_code in [200, 204]
 
 
 def test_api_add_transaction_returns_alert_in_json_payload(client):
-    """System Test: Verify POST /api/transactions yields the alert dictionary structure directly."""
-    uid = register_and_login(client, "alert_user")
-    h = {"X-User-Id": str(uid)}
-
-    # Initialize a clean budget limit profile via the network endpoint
+    _, h = register_and_login(client, "alert_user")
     client.post("/api/budgets", json={"category": "Food", "month": "2026-11", "amount": 100.0, "currency": "USD"},
                 headers=h)
 
-    # Post a large transaction that triggers a warning condition
     r = client.post("/api/transactions", json={
         "date": "2026-11-03", "description": "Expensive Groceries", "amount": 96.0,
         "type": "expense", "category": "Food", "currency": "USD"
@@ -264,15 +294,10 @@ def test_api_add_transaction_returns_alert_in_json_payload(client):
 
 
 def test_api_delete_budget_by_category_endpoint(client):
-    """System Test: Verify DELETE /api/budgets/by-category processes structural parameters."""
-    uid = register_and_login(client, "delete_user")
-    h = {"X-User-Id": str(uid)}
-
-    # Create the budget
+    _, h = register_and_login(client, "delete_user")
     client.post("/api/budgets", json={"category": "Rent", "month": "2026-11", "amount": 1200.0, "currency": "USD"},
                 headers=h)
 
-    # Execute the targeted delete via HTTP request body
     r = client.delete("/api/budgets/by-category", json={
         "category": "Rent",
         "month": "2026-11"
@@ -281,6 +306,5 @@ def test_api_delete_budget_by_category_endpoint(client):
     assert r.status_code == 200
     assert r.get_json()["status"] == "success"
 
-    # Verify a follow-up summary request shows the element is gone
     summary = client.get("/api/summary?month=2026-11", headers=h).get_json()
     assert len(summary["budget"]["status"]) == 0

@@ -1,5 +1,5 @@
 /* ============================================================
-   ExpenseMate — Client-side controller (the "Client" in client-server)
+   ExpenseMate — Client-side controller (JWT Authenticated)
    Includes FULL multi-currency support: base-currency switching,
    converted analytics, a quick converter and an exchange-rate table.
    ============================================================ */
@@ -7,58 +7,124 @@ let state = { uid: null, month: defaultMonth(), base: 'USD', symbol: '$', curren
 let pieChart = null, lineChart = null;
 
 function defaultMonth() { return new Date().toISOString().slice(0, 7); }
-function hdr() { return { 'Content-Type': 'application/json', 'X-User-Id': state.uid }; }
+
+/* Updated Header Helper: Passes JWT Bearer token instead of X-User-Id */
+function hdr() {
+  const token = localStorage.getItem('jwt_token') || '';
+  return {
+    'Content-Type': 'application/json',
+    'Authorization': `Bearer ${token}`
+  };
+}
+
 function setMsg(el, text, ok) {
   el.textContent = text;
   el.className = 'msg ' + (ok === undefined ? '' : (ok ? 'ok' : 'err'));
 }
-/* format money in the user's BASE currency (multi-currency aware) */
+
+/* Format money in the user's BASE currency */
 function fmt(n) {
   return state.symbol + (+n).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 }
-/* format money in an arbitrary (native) currency */
+
+/* Format money in an arbitrary (native) currency */
 function fmtCcy(n, code, symbol) {
   const s = symbol || code || '';
   return s + (+n).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 }
+
 function $(id) { return document.getElementById(id); }
 
-/* ---------- auth ---------- */
+/* ---------- AUTHENTICATION (JWT) ---------- */
 async function register() {
   const msg = $('authMsg');
-  const r = await fetch('/api/register', { method: 'POST', headers: {'Content-Type':'application/json'},
-    body: JSON.stringify({ username: $('user').value, password: $('pass').value,
-                           base_currency: $('regCur').value }) });
-  if (r.ok) { setMsg(msg, 'Registered — please log in.', true); }
-  else { const d = await r.json().catch(()=>({})); setMsg(msg, d.error || 'Registration failed.', false); }
+  const r = await fetch('/api/register', {
+    method: 'POST',
+    headers: {'Content-Type':'application/json'},
+    body: JSON.stringify({
+      username: $('user').value,
+      password: $('pass').value,
+      base_currency: $('regCur').value
+    })
+  });
+
+  const d = await r.json().catch(() => ({}));
+  if (r.ok) {
+    // Automatically save token and log in upon successful registration
+    if (d.access_token) {
+      localStorage.setItem('jwt_token', d.access_token);
+      setupUserSession(d);
+    } else {
+      setMsg(msg, 'Registered — please log in.', true);
+    }
+  } else {
+    setMsg(msg, d.error || 'Registration failed.', false);
+  }
 }
+
 async function login() {
   const msg = $('authMsg');
-  const r = await fetch('/api/login', { method: 'POST', headers: {'Content-Type':'application/json'},
-    body: JSON.stringify({ username: $('user').value, password: $('pass').value }) });
-  const d = await r.json();
-  if (!r.ok) { setMsg(msg, d.error || 'Invalid credentials.', false); return; }
-  state.uid = d.user_id;
-  state.base = d.base_currency || 'USD';
-  state.symbol = d.base_symbol || '$';
-  $('whoLabel').textContent = 'Hi, ' + d.username;
+  const r = await fetch('/api/login', {
+    method: 'POST',
+    headers: {'Content-Type':'application/json'},
+    body: JSON.stringify({ username: $('user').value, password: $('pass').value })
+  });
+
+  const d = await r.json().catch(() => ({}));
+  if (!r.ok) {
+    setMsg(msg, d.error || 'Invalid credentials.', false);
+    return;
+  }
+
+  // Save JWT Token to localStorage
+  if (d.access_token) {
+    localStorage.setItem('jwt_token', d.access_token);
+  }
+
+  setupUserSession(d);
+}
+
+async function setupUserSession(userData) {
+  state.uid = userData.user_id;
+  state.base = userData.base_currency || 'USD';
+  state.symbol = userData.base_symbol || '$';
+
+  if (userData.username) {
+    $('whoLabel').textContent = 'Hi, ' + userData.username;
+  }
+
   $('auth').classList.add('hidden');
   $('app').classList.remove('hidden');
+
   await loadCurrencies();
   populateMonths();
   bindNav();
   refresh();
 }
+
 function logout() {
+  localStorage.removeItem('jwt_token');
   state.uid = null;
   $('app').classList.add('hidden');
   $('auth').classList.remove('hidden');
 }
 
+/* Intercept 401 Unauthenticated responses across API calls */
+function checkAuth(response) {
+  if (response.status === 401) {
+    logout();
+    setMsg($('authMsg'), 'Session expired. Please log in again.', false);
+    return false;
+  }
+  return true;
+}
+
 /* ---------- MULTI-CURRENCY: rates, selectors, converter ---------- */
 async function loadCurrencies() {
-  const r = await fetch(`/api/currencies?uid=${state.uid || ''}`);
-  const d = await r.json();
+  const r = await fetch('/api/currencies', { headers: hdr() });
+  const d = await r.json().catch(() => ({}));
+  if (!d.currencies) return;
+
   state.currencies = d.currencies;
   state.base = d.base_currency || state.base;
   state.symbol = d.base_symbol || state.symbol;
@@ -74,6 +140,7 @@ async function loadCurrencies() {
   renderRates(d.table, d.base_currency);
   doConvert();
 }
+
 function fillSelect(sel, list, selected) {
   if (!sel) return;
   sel.innerHTML = '';
@@ -84,34 +151,49 @@ function fillSelect(sel, list, selected) {
   });
   if (selected && list.includes(selected)) sel.value = selected;
 }
+
 async function saveBaseCurrency() {
   const code = $('baseCurSel').value;
-  const r = await fetch('/api/settings/base_currency', { method: 'POST', headers: hdr(),
-    body: JSON.stringify({ base_currency: code }) });
+  const r = await fetch('/api/settings/base_currency', {
+    method: 'POST',
+    headers: hdr(),
+    body: JSON.stringify({ base_currency: code })
+  });
+  if (!checkAuth(r)) return;
+
   const d = await r.json();
   if (!r.ok) { setMsg($('baseMsg'), d.error || 'Could not change currency.', false); return; }
-  state.base = d.base_currency; state.symbol = d.base_symbol;
+
+  state.base = d.base_currency;
+  state.symbol = d.base_symbol;
   setMsg($('baseMsg'), `Base currency is now ${state.base} — everything re-converted ✓`, true);
   await loadCurrencies();
-  refresh();                       // re-fetch summary -> charts/cards/budgets in new currency
+  refresh();
 }
+
 async function doConvert() {
   const body = { amount: $('convAmt').value || 0, from: $('convFrom').value, to: $('convTo').value };
-  const r = await fetch('/api/convert', { method: 'POST',
-    headers: {'Content-Type':'application/json'}, body: JSON.stringify(body) });
+  const r = await fetch('/api/convert', {
+    method: 'POST',
+    headers: {'Content-Type':'application/json'},
+    body: JSON.stringify(body)
+  });
   const d = await r.json();
   $('convResult').innerHTML = r.ok
     ? `${d.from_symbol}${(+d.amount).toLocaleString()} ${d.from} &nbsp;=&nbsp; <strong>${d.to_symbol}${(+d.result).toLocaleString(undefined,{maximumFractionDigits:4})} ${d.to}</strong>`
     : '—';
 }
+
 function renderRates(table, base) {
   const tb = $('ratesTable');
+  if (!table) return;
   tb.innerHTML = table.map(x => `
     <tr${x.code === base ? ' class="base-row"' : ''}>
       <td><strong>${x.code}</strong></td><td>${x.name}</td>
       <td>${x.symbol}${x.per_base}</td><td>${x.symbol}${x.one_base_equals.toLocaleString()}</td>
     </tr>`).join('');
 }
+
 function renderByCurrency(byCcy) {
   const box = $('byCurrencyBox');
   const keys = Object.keys(byCcy || {});
@@ -127,7 +209,7 @@ function renderByCurrency(byCcy) {
   }).join('');
 }
 
-/* ---------- months ---------- */
+/* ---------- MONTHS ---------- */
 function populateMonths() {
   const sel = $('monthSel');
   sel.innerHTML = '';
@@ -140,7 +222,7 @@ function populateMonths() {
   sel.onchange = () => { state.month = sel.value; refresh(); };
 }
 
-/* ---------- NAVIGATION BAR: click -> slide-down + smooth scroll ---------- */
+/* ---------- NAVIGATION BAR ---------- */
 function bindNav() {
   document.querySelectorAll('.nav-link').forEach(link => {
     link.addEventListener('click', e => {
@@ -150,16 +232,18 @@ function bindNav() {
       document.querySelectorAll('.nav-link').forEach(l => l.classList.remove('active'));
       link.classList.add('active');
       target.classList.remove('slide-section');
-      void target.offsetWidth;                       // force reflow to restart animation
+      void target.offsetWidth;
       target.classList.add('slide-section');
       target.scrollIntoView({ behavior: 'smooth', block: 'start' });
     });
   });
 }
 
-/* ---------- refresh dashboard ---------- */
+/* ---------- REFRESH DASHBOARD ---------- */
 async function refresh() {
   const r = await fetch(`/api/summary?month=${state.month}`, { headers: hdr() });
+  if (!checkAuth(r)) return;
+
   const d = await r.json();
   state.base = d.base_currency || state.base;
   state.symbol = d.base_symbol || state.symbol;
@@ -190,7 +274,6 @@ function renderAlerts(alerts) {
   alerts.forEach(a => { box.innerHTML += `<div class="alert ${a.level}">${a.message}</div>`; });
 }
 
-/* Budget bars in the "Add" panel */
 function renderCostBudgets(status) {
   const box = $('budgetList');
   box.innerHTML = '';
@@ -205,8 +288,6 @@ function renderCostBudgets(status) {
   });
 }
 
-/* Dedicated "Budgets & Alerts" panel */
-/* Dedicated "Budgets & Alerts" panel */
 function renderBudgetsDetail(status) {
   const box = $('budgetsDetail');
   if (!status.length) { box.innerHTML = '<div class="none">No budgets set for this month yet.</div>'; return; }
@@ -233,7 +314,7 @@ function renderBudgetsDetail(status) {
   }).join('');
 }
 
-/* ---------- charts (Chart.js, served locally) ---------- */
+/* ---------- CHARTS (Chart.js) ---------- */
 function drawPie(byCat) {
   const keys = Object.keys(byCat || {});
   const empty = $('pieEmpty'), canvas = $('pieChart');
@@ -253,6 +334,7 @@ function drawPie(byCat) {
       } }
   });
 }
+
 function drawTrend(trend) {
   const labels = (trend || []).map(t => t[0]);
   const empty = $('lineEmpty'), canvas = $('lineChart');
@@ -276,14 +358,13 @@ function drawTrend(trend) {
                 y: { ticks: { color: '#7c8aa5', callback: v => state.symbol + v }, grid: { color: '#e7ecf5' } } } }
   });
 }
+
 function palette(n) {
   const c = ['#7a9bd0','#6fae8f','#f2c07a','#e28ba6','#8fa3c9','#9bc6b0','#d9c2a0','#a6b3d6'];
   return Array.from({length:n}, (_,i) => c[i % c.length]);
 }
 
-/* ---------- transactions ---------- */
-// 1. REMOVE the hardcoded categories dictionary block entirely!
-// 2. Updated function to populate dropdowns dynamically using true title-casing
+/* ---------- TRANSACTIONS ---------- */
 function updateCategories() {
   const typeSelect = document.getElementById("txType");
   const catSelect = document.getElementById("txCat");
@@ -292,22 +373,19 @@ function updateCategories() {
   const selectedType = typeSelect.value;
   catSelect.innerHTML = "";
 
-  // Dynamic Fallbacks: Capitalized appropriately to match your database schema
   const defaultCategories = {
     expense: ["Food", "Groceries", "Rent", "Utilities", "Dining", "Entertainment", "Fitness", "Transport", "Misc"],
     income: ["Salary", "Freelance", "Investments", "Gifts", "Other"]
   };
 
-  // Populate options using regular Title Case values so strings match perfectly
   defaultCategories[selectedType].forEach(category => {
     const option = document.createElement("option");
-    option.value = category; // Fix: Kept original casing ('Food') instead of lowercasing it!
+    option.value = category;
     option.textContent = category;
     catSelect.appendChild(option);
   });
 }
 
-// Ensure the dropdown options adapt instantly when changing the type select element
 window.addEventListener("DOMContentLoaded", () => {
   updateCategories();
   const txType = document.getElementById("txType");
@@ -331,30 +409,28 @@ async function addTx() {
     body: JSON.stringify(body)
   });
 
-  const d = await r.json().catch(() => ({}));
+  if (!checkAuth(r)) return;
 
+  const d = await r.json().catch(() => ({}));
   if (!r.ok) {
     setMsg(msg, d.error || 'Error adding.', false);
     return;
   }
 
   setMsg(msg, `Added ✓ — recorded in ${body.currency}, reported in ${state.base}.`, true);
-
-  // Clear the description and amount fields for the next entry
   ['txDesc', 'txAmt'].forEach(id => $(id).value = '');
 
-  // CRITICAL: If an alert was generated by the backend logic layer, trigger it immediately
   if (d.alert) {
-    // Uses the browser's built-in alert modal style banner
     alert(`[BUDGET ALERT - ${d.alert.level.toUpperCase()}] ${d.alert.message}`);
   }
 
-  // Re-run refresh() to update progress bars, summaries, and graphs instantly!
   refresh();
 }
 
 async function loadTransactions() {
   const r = await fetch(`/api/transactions?month=${state.month}`, { headers: hdr() });
+  if (!checkAuth(r)) return;
+
   const rows = await r.json();
   $('txCount').textContent = rows.length + ' record(s) · amounts converted to ' + state.base;
   const tb = $('txTable');
@@ -371,24 +447,38 @@ async function loadTransactions() {
     </tr>`).join('') ||
     `<tr><td colspan="8" style="color:var(--muted)">No transactions.</td></tr>`;
 }
+
 async function delTx(id) {
-  await fetch('/api/transactions/' + id, { method: 'DELETE', headers: hdr() });
-  refresh();
+  const r = await fetch('/api/transactions/' + id, { method: 'DELETE', headers: hdr() });
+  if (checkAuth(r)) refresh();
 }
 
-/* ---------- budgets ---------- */
+/* ---------- BUDGETS ---------- */
 async function setBudget() {
   const msg = $('bgMsg');
-  const body = { category: $('bgCat').value, month: state.month,
-                 amount: $('bgAmt').value, currency: $('bgCur').value || $('txCur').value };
+  const body = {
+    category: $('bgCat').value,
+    month: state.month,
+    amount: $('bgAmt').value,
+    currency: $('bgCur').value || $('txCur').value
+  };
   const r = await fetch('/api/budgets', { method: 'POST', headers: hdr(), body: JSON.stringify(body) });
-  if (!r.ok) { const d = await r.json().catch(()=>({})); setMsg(msg, d.error || 'Error.', false); return; }
+  if (!checkAuth(r)) return;
+
+  if (!r.ok) {
+    const d = await r.json().catch(()=>({}));
+    setMsg(msg, d.error || 'Error.', false);
+    return;
+  }
   setMsg(msg, `Budget set in ${body.currency} ✓`, true);
   $('bgAmt').value = '';
   refresh();
 }
+
 async function populateBudgetCats() {
   const r = await fetch('/api/summary?month=' + state.month, { headers: hdr() });
+  if (!checkAuth(r)) return;
+
   const d = await r.json();
   const cats = Object.keys(d.by_category || {});
   const sel = $('bgCat');
@@ -398,30 +488,67 @@ async function populateBudgetCats() {
     .filter((v,i,a) => a.indexOf(v) === i)
     .forEach(c => { const o = document.createElement('option'); o.value = c; o.textContent = c; sel.appendChild(o); });
   if (prev) sel.value = prev;
-  // keep the budget currency selector in sync with available currencies
   fillSelect($('bgCur'), state.currencies.length ? state.currencies : ['USD'], state.base);
 }
-/* ---------- delete budget ---------- */
-async function delBudget(id) {
-  if (!confirm("Are you sure you want to permanently delete this budget?")) return;
 
-  const r = await fetch('/api/budgets/' + id, { method: 'DELETE', headers: hdr() });
+async function delBudgetByCategory(categoryName) {
+  if (!confirm(`Are you sure you want to delete the budget for '${categoryName}'?`)) return;
+
+  const payload = {
+    category: categoryName,
+    month: state.month
+  };
+
+  const r = await fetch('/api/budgets/by-category', {
+    method: 'DELETE',
+    headers: hdr(),
+    body: JSON.stringify(payload)
+  });
+  if (!checkAuth(r)) return;
+
   if (r.ok) {
-    refresh(); // Refresh bars and metrics instantly across the dashboard!
+    refresh();
   } else {
     const d = await r.json().catch(() => ({}));
-    alert(d.error || 'Failed to remove budget.');
+    alert(d.error || 'Failed to remove budget entry.');
   }
 }
 
-/* ---------- csv ---------- */
+/* ---------- CSV EXPORT / IMPORT ---------- */
 async function exportCsv() {
+  const msg = $('csvMsg');
+
+  // Fetch the CSV directly with JWT headers attached
+  const r = await fetch(`/api/export?month=${state.month}`, {
+    method: 'GET',
+    headers: hdr()
+  });
+
+  if (!checkAuth(r)) return;
+
+  if (!r.ok) {
+    setMsg(msg, 'Failed to export CSV.', false);
+    return;
+  }
+
+  // Convert response stream to a Blob file object
+  const blob = await r.blob();
+  const url = window.URL.createObjectURL(blob);
+
+  // Trigger file download dynamically in browser
   const a = document.createElement('a');
-  a.href = `/api/export?month=${state.month}&uid=${state.uid}`;
-  a.download = 'expensemate-' + state.month + '.csv';
+  a.href = url;
+  a.download = `expensemate-${state.month}.csv`;
+  document.body.appendChild(a);
   a.click();
-  setMsg($('csvMsg'), `Exported ✓ (includes native currency + amount in ${state.base})`, true);
+
+  // Cleanup memory
+  a.remove();
+  window.URL.revokeObjectURL(url);
+
+  setMsg(msg, `Exported ✓ (includes native currency + amount in ${state.base})`, true);
 }
+
 async function importCsv(ev) {
   const f = ev.target.files[0]; if (!f) return;
   let text = await f.text();
@@ -435,6 +562,7 @@ async function importCsv(ev) {
     headers: hdr(),
     body: JSON.stringify({ csv: text })
   });
+  if (!checkAuth(r)) return;
 
   const d = await r.json();
   if (!r.ok) { setMsg($('csvMsg'), d.error || 'Import failed.', false); return; }
@@ -442,35 +570,30 @@ async function importCsv(ev) {
   setMsg($('csvMsg'), `Imported ${d.imported} rows, skipped ${d.skipped} invalid rows ✓`, true);
   ev.target.value = '';
 
-  setTimeout(() => {
-    refresh();
-  }, 300);
-}
-/* Targeted string-matching deletion helper inside app.js */
-async function delBudgetByCategory(categoryName) {
-  if (!confirm(`Are you sure you want to delete the budget for '${categoryName}'?`)) return;
-
-  const payload = {
-    category: categoryName,
-    month: state.month // Reads the active month globally loaded in state
-  };
-
-  const r = await fetch('/api/budgets/by-category', {
-    method: 'DELETE',
-    headers: hdr(),
-    body: JSON.stringify(payload)
-  });
-
-  if (r.ok) {
-    refresh(); // Refresh progress bars cleanly!
-  } else {
-    const d = await r.json().catch(() => ({}));
-    alert(d.error || 'Failed to remove budget entry.');
-  }
+  setTimeout(() => { refresh(); }, 300);
 }
 
-/* ---------- init (runs before login too, so the register form has currencies) ---------- */
+/* ---------- INIT (Auto-login check via JWT) ---------- */
 (async function init() {
   $('txDate').value = new Date().toISOString().slice(0,10);
-  await loadCurrencies();      // fills register currency + converter selects
+
+  // Check if user has an existing JWT token stored
+  const token = localStorage.getItem('jwt_token');
+  if (token) {
+    // Attempt fetching settings to test token validity
+    const r = await fetch('/api/settings', { headers: hdr() });
+    if (r.ok) {
+      const d = await r.json();
+      setupUserSession({
+        base_currency: d.base_currency,
+        base_symbol: d.base_symbol
+      });
+      return;
+    } else {
+      // Invalid or expired token
+      localStorage.removeItem('jwt_token');
+    }
+  }
+
+  await loadCurrencies();
 })();
