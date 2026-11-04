@@ -1,5 +1,4 @@
 import os
-
 from app.backend.server import create_app
 
 if os.environ.get("EXPENSEMATE_DB"):

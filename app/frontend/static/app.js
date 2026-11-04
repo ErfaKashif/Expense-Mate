@@ -118,10 +118,10 @@ function checkAuth(response) {
   }
   return true;
 }
-
 /* ---------- MULTI-CURRENCY: rates, selectors, converter ---------- */
 async function loadCurrencies() {
-  const r = await fetch('/api/currencies', { headers: hdr() });
+  // Fetch currencies without enforcing a JWT token requirement for guest visitors
+  const r = await fetch('/api/currencies');
   const d = await r.json().catch(() => ({}));
   if (!d.currencies) return;
 
@@ -133,14 +133,15 @@ async function loadCurrencies() {
   fillSelect($('baseCurSel'), d.currencies, d.base_currency);
   fillSelect($('convFrom'), d.currencies, 'USD');
   fillSelect($('convTo'), d.currencies, d.base_currency);
+
+  // Populate registration dropdown on initial page visit
   if ($('regCur')) fillSelect($('regCur'), d.currencies, 'USD');
 
-  $('baseChip').textContent = state.symbol + ' ' + state.base;
-  $('ratesBaseLabel').textContent = 'vs ' + state.base;
+  if ($('baseChip')) $('baseChip').textContent = state.symbol + ' ' + state.base;
+  if ($('ratesBaseLabel')) $('ratesBaseLabel').textContent = 'vs ' + state.base;
   renderRates(d.table, d.base_currency);
   doConvert();
 }
-
 function fillSelect(sel, list, selected) {
   if (!sel) return;
   sel.innerHTML = '';

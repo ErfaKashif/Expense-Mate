@@ -28,11 +28,9 @@ def create_app(db_path=None, testing=False):
         template_folder=FRONTEND_DIR,
         static_url_path="/static",
     )
-
     # Reads JWT_SECRET_KEY from .env (falls back to a default key if missing)
     app.config["JWT_SECRET_KEY"] = os.environ.get("JWT_SECRET_KEY", "fallback-secret-key-for-dev")
     jwt = JWTManager(app)
-
     db = Database(db_path)
     logic = Logic(db)
     app.config["TESTING"] = testing
