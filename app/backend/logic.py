@@ -221,7 +221,7 @@ class Logic:
         # Query your db layer for this specific category budget row
         # (Assumes your db layer has a get_single_budget method or similar)
         budget = self.db.get_single_budget(user_id, month, cat_id)
-
+        alert=None
         if budget:
             # Convert transaction amount into the budget's target currency
             b_cur = budget["currency"].upper()
@@ -230,8 +230,10 @@ class Logic:
             # Convert the transaction deduction to budget currency units
             converted_deduction = self.convert(float(amount), tx_cur, b_cur)
 
-            # Calculate new remaining amount
-            new_remaining = round(float(budget["remaining_amount"]) - converted_deduction, 2)
+            # Calculate new remaining amount safely
+            # FIX: Explicitly cast and read original balance clean from mutable references
+            current_remaining = float(budget["remaining_amount"])
+            new_remaining = round(current_remaining - converted_deduction, 2)
 
             # Update the row in the budgets table directly
             self.db.update_budget_remaining(budget["id"], new_remaining)
@@ -239,7 +241,14 @@ class Logic:
             # 3. Trigger immediate runtime alert calculation
             limit = float(budget["amount"])
             if limit > 0:
-                total_spent = limit - new_remaining
+                # FIX: Calculate total spent based on actual deduction limits
+                # instead of letting negative remaining values compound into millions
+                total_spent = round(limit - new_remaining, 2)
+
+                # Guard against corrupted historical remaining amounts blowing up the ratio
+                if total_spent < 0:
+                    total_spent = 0
+
                 ratio = round(total_spent / limit, 4)
 
                 # Determine threshold triggers matching your warning constants
@@ -265,11 +274,7 @@ class Logic:
                         "level": level,
                         "message": msg
                     }
-
-        return tx_id, alert
-
-    # In app/backend/logic.py
-
+        return tx_id,alert
     def delete_transaction(self, user_id, tx_id):
         """Intercepts deletion to safely restore budget remaining amounts using logic layer conversion tools."""
         # 1. Fetch transaction metadata from the DB layer first
