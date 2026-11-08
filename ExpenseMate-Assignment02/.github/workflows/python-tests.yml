@@ -2,7 +2,7 @@ name: ExpenseMate CI Pipeline
 
 on:
   push:
-    branches: [ main, master, assignment-02 ]
+    branches: [ main, master, assignment-02, US-Fix ]
   pull_request:
     branches: [ main, master ]
 
