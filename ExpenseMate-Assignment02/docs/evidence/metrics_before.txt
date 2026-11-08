@@ -1,0 +1,22 @@
+## radon cc (cyclomatic complexity, all blocks)
+Average complexity: A (2.8679245283018866)
+## blocks with CC >= 6 (rank B or worse)
+logic.py
+    M 190:4 Logic.add_transaction - C (16)
+    M 475:4 Logic.import_csv - C (15)
+    M 330:4 Logic.category_summary - B (10)
+    M 406:4 Logic.budget_status - B (10)
+## radon mi (maintainability index per file)
+__init__.py - A (100.00)
+logic.py - A (35.55)
+server.py - A (45.31)
+db.py - A (57.39)
+## SLOC
+    SLOC: 772
+## files containing SQL statements
+./db.py
+## SQL statement count per file
+./db.py 22
+## largest class: public+private methods
+db.py:Database methods=21
+logic.py:Logic methods=26

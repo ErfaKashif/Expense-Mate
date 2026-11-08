@@ -1,0 +1,16 @@
+# Secrets / local configuration (never commit real credentials)
+.env
+
+# Python bytecode & tooling caches
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Virtual environments
+.venv/
+venv/
+
+# IDE
+.idea/workspace.xml

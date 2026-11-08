@@ -1,0 +1,66 @@
+## radon cc (cyclomatic complexity, all blocks)
+Average complexity: A (2.3065693430656933)
+## blocks with CC >= 6 (rank B or worse)
+services/analytics_service.py
+    M 16:4 AnalyticsService.category_summary - B (9)
+## radon mi (maintainability index per file)
+__init__.py - A (100.00)
+server.py - A (70.53)
+controllers/_request.py - A (82.60)
+controllers/auth_controller.py - A (100.00)
+controllers/__init__.py - A (100.00)
+controllers/error_handlers.py - A (100.00)
+controllers/currency_controller.py - A (100.00)
+controllers/budget_controller.py - A (76.87)
+controllers/expense_controller.py - A (74.94)
+database/config.py - A (85.75)
+database/__init__.py - A (100.00)
+database/connection.py - A (81.84)
+database/schema.py - A (89.96)
+services/expense_service.py - A (70.26)
+services/currency_service.py - A (76.48)
+services/analytics_service.py - A (65.34)
+services/__init__.py - A (100.00)
+services/budget_calculator.py - A (71.73)
+services/csv_importer.py - A (73.36)
+services/budget_service.py - A (74.66)
+services/user_service.py - A (72.25)
+repositories/expense_repository.py - A (60.35)
+repositories/__init__.py - A (100.00)
+repositories/user_repository.py - A (64.48)
+repositories/budget_repository.py - A (83.11)
+repositories/category_repository.py - A (100.00)
+models/expense.py - A (80.98)
+models/_convert.py - A (69.58)
+models/__init__.py - A (100.00)
+models/budget.py - A (72.28)
+models/user.py - A (64.42)
+models/category.py - A (100.00)
+utils/errors.py - A (100.00)
+utils/__init__.py - A (100.00)
+utils/validators.py - A (70.15)
+utils/logger.py - A (98.11)
+## SLOC
+    SLOC: 1129
+## files containing SQL statements
+./database/schema.py
+./repositories/budget_repository.py
+./repositories/category_repository.py
+./repositories/expense_repository.py
+./repositories/user_repository.py
+## SQL statement count per file
+./database/connection.py 0
+./database/schema.py 3
+./repositories/expense_repository.py 3
+./repositories/user_repository.py 4
+./repositories/budget_repository.py 5
+./repositories/category_repository.py 4
+## largest class: public+private methods
+database/connection.py:Database methods=6
+repositories/expense_repository.py:ExpenseRepository methods=6
+repositories/user_repository.py:UserRepository methods=5
+services/budget_calculator.py:BudgetCalculator methods=6
+services/budget_service.py:BudgetService methods=7
+services/currency_service.py:CurrencyService methods=7
+services/expense_service.py:ExpenseService methods=8
+services/user_service.py:UserService methods=6

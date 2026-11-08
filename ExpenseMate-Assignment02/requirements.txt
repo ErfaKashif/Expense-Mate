@@ -1,0 +1,10 @@
+# --- Application runtime ---
+Flask>=3.0
+Flask-JWT-Extended>=4.6
+psycopg[binary]>=3.1      # PostgreSQL driver (replaces the built-in sqlite3 module)
+python-dotenv>=1.0        # loads DATABASE_URL etc. from a local .env file
+
+# --- Development / testing ---
+pytest>=8.0
+pytest-cov>=5.0
+radon>=6.0                # cyclomatic-complexity metrics for the maintainability report
