@@ -120,11 +120,20 @@ function checkAuth(response) {
 }
 /* ---------- MULTI-CURRENCY: rates, selectors, converter ---------- */
 async function loadCurrencies() {
-  // Fetch currencies without enforcing a JWT token requirement for guest visitors
-  const r = await fetch('/api/currencies');
-  const d = await r.json().catch(() => ({}));
-  if (!d.currencies) return;
+   // Check if a token actually exists before attaching it
+  const token = localStorage.getItem('jwt_token');
+  const fetchOptions = token ? { headers: hdr() } : {};
 
+  // Fetch currencies safely
+  const r = await fetch('/api/currencies', fetchOptions);
+
+  // If the server rejects an expired token with a 422/401, re-try strictly as a guest visitor
+  if (r.status === 422 || r.status === 401) {
+    const guestResponse = await fetch('/api/currencies');
+    var d = await guestResponse.json().catch(() => ({}));
+  } else {
+    var d = await r.json().catch(() => ({}));
+  }
   state.currencies = d.currencies;
   state.base = d.base_currency || state.base;
   state.symbol = d.base_symbol || state.symbol;
@@ -142,6 +151,7 @@ async function loadCurrencies() {
   renderRates(d.table, d.base_currency);
   doConvert();
 }
+
 function fillSelect(sel, list, selected) {
   if (!sel) return;
   sel.innerHTML = '';
@@ -163,12 +173,24 @@ async function saveBaseCurrency() {
   if (!checkAuth(r)) return;
 
   const d = await r.json();
-  if (!r.ok) { setMsg($('baseMsg'), d.error || 'Could not change currency.', false); return; }
+  if (!r.ok) {
+    setMsg($('baseMsg'), d.error || 'Could not change currency.', false);
+    return;
+  }
 
+  // 1. Explicitly update local app state with what the database returned
   state.base = d.base_currency;
   state.symbol = d.base_symbol;
+
   setMsg($('baseMsg'), `Base currency is now ${state.base} — everything re-converted ✓`, true);
+
+  // 2. Refresh lists but ensure state parameters aren't implicitly wiped
   await loadCurrencies();
+
+  // 3. Force state persistence over fallback definitions manually if needed
+  state.base = d.base_currency;
+  state.symbol = d.base_symbol;
+
   refresh();
 }
 
@@ -579,7 +601,7 @@ async function importCsv(ev) {
 /* ---------- INIT (Auto-login check via JWT) ---------- */
 (async function init() {
   $('txDate').value = new Date().toISOString().slice(0,10);
-
+  await loadCurrencies();
   // Check if user has an existing JWT token stored
   const token = localStorage.getItem('jwt_token');
   if (token) {
@@ -598,5 +620,4 @@ async function importCsv(ev) {
     }
   }
 
-  await loadCurrencies();
 })();
